@@ -14,7 +14,7 @@ Project skills for Claude Code (and other agents that read `.claude/skills/`). E
 
 ## Frontend and design skills
 
-Vendored **unmodified** from upstream at the pinned commit, so they can be refreshed by copying the folder again. They assume the frontend is Next.js (16.3+, Turbopack). Framework reference knowledge is not a skill: Next.js ships version-matched docs in `node_modules/next/dist/docs/` and writes an `AGENTS.md` pointing at them ([Next.js AI agents guide](https://nextjs.org/docs/app/guides/ai-agents)).
+Vendored from upstream at the pinned commit, so they can be refreshed by copying the folder again. Copied as-is except for upstream build and test files we drop: `vercel-react-best-practices` without `AGENTS.md` (a compiled duplicate of `rules/`) and `README.md` (contributor docs), and with the `SKILL.md` pointer to `AGENTS.md` removed; `shadcn` without `evals/` and `agents/`. They assume the frontend is Next.js (16.3+, Turbopack). Framework reference knowledge is not a skill: Next.js ships version-matched docs in `node_modules/next/dist/docs/` and writes an `AGENTS.md` pointing at them ([Next.js AI agents guide](https://nextjs.org/docs/app/guides/ai-agents)).
 
 | Skill | What it does | When to use | Source |
 |---|---|---|---|
