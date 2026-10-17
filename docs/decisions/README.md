@@ -19,3 +19,4 @@ When an ADR is superseded, set its Status to `superseded`, add `- Superseded by:
 
 | ADR | Title | Status | Date |
 |---|---|---|---|
+| [0001](0001-backend-python-fastapi.md) | Backend in Python + FastAPI | accepted | 2026-10-17 |
