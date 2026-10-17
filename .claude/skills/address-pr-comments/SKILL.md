@@ -16,7 +16,7 @@ Automates the full loop for responding to PR review comments: fetch → assess �
 
 ## Invocation
 
-```
+```text
 /address-pr-comments [PR#] [--auto]
 ```
 
@@ -98,7 +98,7 @@ Keep your reasoning for each decision (one sentence).
 
 Print this table before touching any code:
 
-```
+```text
 | # | Author | File:Line | Comment | Decision | Reason |
 |---|--------|-----------|---------|----------|--------|
 | 1 | alice  | src/api.ts:42 | "This should be async" | FIX | Correct — the call can block |
@@ -196,7 +196,7 @@ create labels implicitly.
 Include the label outcome from Step 7 (swapped, skipped, or failed) — don't
 just list the comment-level outcomes:
 
-```
+```text
 | # | File:Line | Decision | Reply posted |
 |---|-----------|----------|-------------|
 | 1 | src/api.ts:42 | FIX | yes |

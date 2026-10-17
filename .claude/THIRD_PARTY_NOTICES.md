@@ -4,7 +4,7 @@ Some skills, rules and guidance in this repository are adapted or vendored from 
 
 ## mattpocock/skills
 
-Source: https://github.com/mattpocock/skills (commit `49dd158d1076134a641b33efb035946536778336`)
+Source: <https://github.com/mattpocock/skills> (commit `49dd158d1076134a641b33efb035946536778336`)
 Used in: skills `grill-with-docs`, `domain-modeling`
 
 ```text
@@ -33,7 +33,7 @@ SOFTWARE.
 
 ## guidodinello/claude-dotfiles
 
-Source: https://github.com/guidodinello/claude-dotfiles
+Source: <https://github.com/guidodinello/claude-dotfiles>
 Used in: skills `ticket-refinement`, `code-review`, `address-pr-comments`, `configure-dependency`, `docs-index`; rules `python.md`, `database.md`, `docker.md`, `ci.md`; the reasoning-discipline and debugging-patterns sections of the root `AGENTS.md`
 
 ```text

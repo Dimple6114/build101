@@ -7,14 +7,6 @@ paths:
 
 > Adapted from [guidodinello/claude-dotfiles `rules/database.md`](https://github.com/guidodinello/claude-dotfiles/blob/main/.claude/rules/database.md) (MIT, see [THIRD_PARTY_NOTICES](../THIRD_PARTY_NOTICES.md)).
 
-<!-- Code examples and table rows can't be rewrapped without breaking them;
-     prose is held to 80 columns. This directive travels with the file so it
-     lints clean in any repo that vendors it. Claude Code strips block HTML
-     comments before injection, so this costs no context. -->
-<!-- markdownlint-configure-file {
-  "MD013": { "code_blocks": false, "tables": false }
-} -->
-
 # Database — Agent Design Guidelines
 
 > build101's database is TBD (see

@@ -17,7 +17,7 @@ Actively build and sharpen the project's domain model as you design. This is the
 
 build101 has a single context. The domain model lives in the shared `docs/` tree:
 
-```
+```text
 /
 ├── docs/
 │   ├── glossary.md          ← the domain language

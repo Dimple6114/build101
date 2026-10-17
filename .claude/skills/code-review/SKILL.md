@@ -104,7 +104,7 @@ Notes:
 - You must cite and link each bug (eg. if referring to a CLAUDE.md, you must link it)
 - For each inline comment, use this format:
 
-```
+```text
 <brief description of bug> (<source>: "<relevant quote or rule>")
 
 https://github.com/{owner}/{repo}/blob/{full_sha}/{path}#L{start}-L{end}
@@ -112,7 +112,7 @@ https://github.com/{owner}/{repo}/blob/{full_sha}/{path}#L{start}-L{end}
 
 - The review body (top-level text of the review) should be:
 
-```
+```text
 ### Code review
 
 Found N blocking issue(s) and M non-blocking note(s).
@@ -126,7 +126,7 @@ Found N blocking issue(s) and M non-blocking note(s).
 
 - Or, if you found no issues, post a review with this body and no inline comments:
 
-```
+```text
 ### Code review
 
 No issues found. Checked for bugs and CLAUDE.md compliance.
