@@ -1,0 +1,13 @@
+# Weekly version-update PRs, grouped into one PR per ecosystem. Only GitHub
+# Actions pins exist today; add `uv` (directory: /backend) and the frontend's
+# ecosystem when those projects get a manifest.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      github-actions:
+        patterns:
+          - "*"

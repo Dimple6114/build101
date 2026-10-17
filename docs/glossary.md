@@ -1,0 +1,86 @@
+# Glossary
+
+> Draft. Terms are still being refined with [idea.md](idea.md); challenge them in an issue or PR.
+
+The shared language for build101: an owner-facing AI assistant for small businesses, living in the chat app the Owner already uses. Its first vertical is marketing: an AI marketing agency in WhatsApp. Format: [GLOSSARY-FORMAT.md](../.claude/skills/domain-modeling/GLOSSARY-FORMAT.md).
+
+## Language
+
+**Owner**:
+The person who runs a small Business and is the only one who talks to the assistant directly.
+_Avoid_: User, customer, admin
+_Status_: draft
+
+**Business**:
+The small company the Owner runs, whose day-to-day operations the assistant helps with.
+_Avoid_: Client, account, store
+_Status_: draft
+
+**Channel**:
+The chat app through which the Owner talks to the assistant (e.g. WhatsApp, Telegram, a chat PWA).
+_Avoid_: Platform, integration, interface
+_Status_: draft
+
+## Marketing agency
+
+**Agency**:
+The team of AI agents that does the Business's marketing on the Owner's behalf, presented to the Owner as one account manager.
+_Avoid_: Bot, tool, app
+_Status_: draft
+
+**Orchestrator**:
+The agent the Owner talks to in the Channel; it understands requests and hands work to Specialists.
+_Avoid_: Chatbot, assistant (when the distinction from Specialists matters)
+_Status_: draft
+
+**Specialist**:
+An agent with one marketing job (strategy, copy, art direction, asset analysis), shared by every Business and personalized by its Brand Brain.
+_Avoid_: Sub-agent, worker
+_Status_: draft
+
+**Brand Brain**:
+Everything the Agency knows about one Business's brand (voice, audience, content pillars, products, colors, constraints), versioned as the Owner corrects it.
+_Avoid_: Brand profile, brand kit, context
+_Status_: draft
+
+**Brand asset**:
+A logo, photo or video the Owner provided, sent through the Channel or the web, that the Agency learns from and can use in Posts.
+_Avoid_: Media, upload, content
+_Status_: draft
+
+## What the Business sells
+
+**Product**:
+Something the Business sells, described by the Owner (name, description, optional price and category) and shown in its Brand assets.
+_Avoid_: Item, SKU, listing
+_Status_: draft
+
+**Catalog**:
+All the Products of one Business; the Brand Brain summarizes only its most important ones.
+_Avoid_: Inventory, store, shop
+_Status_: draft
+
+**Offer**:
+A commercial proposal the Owner has defined with its conditions (price or discount, validity), either a pack of Products sold together or a promo; the Agency may suggest one, but it exists only once the Owner confirms it.
+_Avoid_: Deal, discount, campaign
+_Status_: draft
+
+**Content plan**:
+The set of Posts proposed for one week, which the Owner approves as a whole before the Posts are created.
+_Avoid_: Calendar, schedule
+_Status_: draft
+
+**Post**:
+One piece of content for a social network that goes through creation, Approval and publishing: either a branded image with its caption, or a Reel.
+_Avoid_: Publication, piece
+_Status_: draft
+
+**Reel**:
+A Post made from one of the Owner's videos, published as-is with a caption and a cover frame chosen by the Agency.
+_Avoid_: Video post, clip, story
+_Status_: draft
+
+**Approval**:
+The Owner's explicit yes to a specific Post; nothing is published without it.
+_Avoid_: Confirmation, sign-off
+_Status_: draft

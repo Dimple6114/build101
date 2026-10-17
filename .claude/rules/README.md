@@ -1,0 +1,12 @@
+# Rules
+
+Path-scoped rules for Claude Code. Each file starts with YAML frontmatter listing `paths:` globs; Claude Code loads a rule into context only when it reads or edits a file matching one of those globs, so a rule costs nothing while you work elsewhere. Project-wide guidance lives in the root [AGENTS.md](../../AGENTS.md) (read natively by Claude Code and other agents); skills live in [`.claude/skills/`](../skills/README.md).
+
+| Rule | Applies to (`paths`) | What it covers | Source |
+|---|---|---|---|
+| [python.md](python.md) | `**/*.py`, `**/pyproject.toml` | Python style and design: principles, uv/ruff/pytest workflow, typing, logging, errors, async, tests | [claude-dotfiles `rules/python.md`](https://github.com/guidodinello/claude-dotfiles/blob/main/.claude/rules/python.md), MIT © 2026 guidodinello. Adapted for build101: commands run from `backend/`; examples rewritten for a chat/messaging app; ruff `known-first-party` left as a placeholder; project table filled with build101 values (build backend TBD) |
+| [database.md](database.md) | `**/alembic/**`, `**/migrations/**`, `**/*.sql` | PostgreSQL schema design, constraints, indexing, upserts, pagination, migration discipline | [claude-dotfiles `rules/database.md`](https://github.com/guidodinello/claude-dotfiles/blob/main/.claude/rules/database.md), MIT © 2026 guidodinello. Adapted for build101: note pointing to the PostgreSQL decision (ADR 0003); otherwise unchanged |
+| [docker.md](docker.md) | `**/Dockerfile*`, `**/*.dockerfile`, `**/docker-compose*.yml`, `**/docker-compose*.yaml`, `**/.dockerignore` | Dockerfiles (pinning, multi-stage, cache order, non-root, uv) and Compose (merges, volumes, networks) | [claude-dotfiles `rules/docker.md`](https://github.com/guidodinello/claude-dotfiles/blob/main/.claude/rules/docker.md), MIT © 2026 guidodinello. Adapted for build101: Compose examples use `./backend` as build context and bind-mount root |
+| [ci.md](ci.md) | `.github/workflows/**`, `**/.github/workflows/**` | GitHub Actions: least-privilege permissions, path filtering, summary gates | [claude-dotfiles `rules/ci.md`](https://github.com/guidodinello/claude-dotfiles/blob/main/.claude/rules/ci.md), MIT © 2026 guidodinello. Adapted for build101: removed self-hosted runner guidance (GitHub-hosted runners only); checklist cleaned up |
+
+License texts: [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md).

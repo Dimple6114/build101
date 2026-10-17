@@ -1,12 +1,44 @@
 # Docs
 
-Everything about the business: the why, the who, and the what. Code-free on purpose.
+Everything needed to build the MVP: an AI marketing agency for small business owners that lives in WhatsApp.
 
-| File | Purpose |
+## Reading order
+
+**New to the project?** Read 1–3. **Implementing?** Read your task in [implementation/tasks.md](implementation/tasks.md) and the docs it links.
+
+1. [idea.md](idea.md): problem, user, value proposition
+2. [product/mvp.md](product/mvp.md): scope, priorities (MoSCoW), success criteria, demo fallbacks
+3. [product/user-flows.md](product/user-flows.md): state machines and every flow, step by step
+4. [product/conversation-design.md](product/conversation-design.md): bot persona, writing rules, copy deck, system prompt skeleton
+5. [architecture/overview.md](architecture/overview.md): components, request lifecycle, jobs, deployment, repo layout
+6. [architecture/agents.md](architecture/agents.md): Brand Brain, each agent's I/O, orchestrator tools, LLM conventions
+7. [architecture/data-model.md](architecture/data-model.md): Postgres schema
+8. [architecture/api.md](architecture/api.md): REST endpoints, webhooks, button IDs, internal interfaces
+9. [architecture/integrations.md](architecture/integrations.md): WhatsApp Cloud API, Zernio, Claude, Supabase, renderer
+10. [design/web-app.md](design/web-app.md): onboarding wizard, dashboard, chat simulator
+11. [design/post-templates.md](design/post-templates.md): branded image templates
+12. [implementation/plan.md](implementation/plan.md): 24h timeline, tracks, pre-hackathon checklist, risks
+13. [implementation/tasks.md](implementation/tasks.md): task-by-task breakdown with acceptance criteria
+14. [implementation/setup.md](implementation/setup.md): env vars, local run, deploy
+15. [product/demo-script.md](product/demo-script.md): the 4-minute demo
+
+## Folders
+
+- **[product/](product/README.md)**: what the MVP does and how it behaves.
+- **[architecture/](architecture/README.md)**: components, agents, data model, API and integrations.
+- **[design/](design/README.md)**: web app and post template design.
+- **[implementation/](implementation/README.md)**: 24h plan, tasks and setup.
+- **[research/](research/README.md)**: investigations behind the decisions.
+- **[decisions/](decisions/README.md)**: ADRs.
+
+## Other files
+
+Every folder here has a `README.md` index; start from this page and follow the links. Conventions: [docs-index skill](../.claude/skills/docs-index/SKILL.md).
+
+| Path | Purpose |
 |---|---|
-| [idea.md](idea.md) | Problem, target user, value proposition |
-| [roadmap.md](roadmap.md) | Phases from hackathon demo to product, pricing draft |
-| [demo-plan.md](demo-plan.md) | What we show at the hackathon and how |
-| [competitors.md](competitors.md) | Landscape and where the gap is |
+| [competitors.md](competitors.md) | Landscape summary and where the gap is (deep dives go in research/) |
 | [open-questions.md](open-questions.md) | Risks and unknowns to resolve |
-| [decisions/](decisions/) | Short records of decisions we made and why |
+| [glossary.md](glossary.md) | Shared domain language (draft) |
+| [research/](research/README.md) | Investigations, spikes, competitor/market/tech research |
+| [decisions/](decisions/README.md) | Short records of decisions we made and why (ADRs) |
