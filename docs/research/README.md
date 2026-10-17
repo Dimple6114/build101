@@ -6,3 +6,4 @@ Cite a source next to every claim, with the date read for anything that changes 
 
 | File | What it covers | Date |
 |---|---|---|
+| [social-publishing-apis.md](social-publishing-apis.md) | Unified APIs to publish to Instagram for the Owner (Zernio, Upload-Post, Ayrshare, ...) | 2026-10-17 |

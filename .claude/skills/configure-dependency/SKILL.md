@@ -16,7 +16,7 @@ allowed-tools: WebFetch WebSearch Read Edit Write Bash
 
 Before writing any integration code, fetch the official documentation for the dependency so configuration is done correctly from the start. Misconfigurations are the hardest bugs to debug — this skill prevents them.
 
-The build101 stack is decided only where an accepted ADR in `docs/decisions/` says so (e.g. the backend is Python + FastAPI with uv, per ADR 0001; the frontend and database are still open). Never assume a language, framework, or package manager beyond that: read what the repo and `docs/decisions/` actually say.
+The build101 stack is decided only where an accepted ADR in `docs/decisions/` says so (e.g. the backend is Python + FastAPI with uv, per ADR 0001). Never assume a language, framework, or package manager beyond that: read what the repo and `docs/decisions/` actually say.
 
 ## Instructions
 

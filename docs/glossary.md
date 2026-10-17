@@ -2,7 +2,7 @@
 
 > Draft. Terms are still being refined with [idea.md](idea.md); challenge them in an issue or PR.
 
-The shared language for build101: an owner-facing AI operations assistant for small businesses, living in the chat app the owner already uses. Format: [GLOSSARY-FORMAT.md](../.claude/skills/domain-modeling/GLOSSARY-FORMAT.md).
+The shared language for build101: an owner-facing AI assistant for small businesses, living in the chat app the Owner already uses. Its first vertical is marketing: an AI marketing agency in WhatsApp. Format: [GLOSSARY-FORMAT.md](../.claude/skills/domain-modeling/GLOSSARY-FORMAT.md).
 
 ## Language
 
@@ -19,4 +19,46 @@ _Status_: draft
 **Channel**:
 The chat app through which the Owner talks to the assistant (e.g. WhatsApp, Telegram, a chat PWA).
 _Avoid_: Platform, integration, interface
+_Status_: draft
+
+## Marketing agency
+
+**Agency**:
+The team of AI agents that does the Business's marketing on the Owner's behalf, presented to the Owner as one account manager.
+_Avoid_: Bot, tool, app
+_Status_: draft
+
+**Orchestrator**:
+The agent the Owner talks to in the Channel; it understands requests and hands work to Specialists.
+_Avoid_: Chatbot, assistant (when the distinction from Specialists matters)
+_Status_: draft
+
+**Specialist**:
+An agent with one marketing job (strategy, copy, art direction, asset analysis), shared by every Business and personalized by its Brand Brain.
+_Avoid_: Sub-agent, worker
+_Status_: draft
+
+**Brand Brain**:
+Everything the Agency knows about one Business's brand (voice, audience, content pillars, products, colors, constraints), versioned as the Owner corrects it.
+_Avoid_: Brand profile, brand kit, context
+_Status_: draft
+
+**Brand asset**:
+A logo or photo the Owner provided, available for use in Posts.
+_Avoid_: Media, upload
+_Status_: draft
+
+**Content plan**:
+The set of Posts proposed for one week, which the Owner approves as a whole before the Posts are created.
+_Avoid_: Calendar, schedule
+_Status_: draft
+
+**Post**:
+One piece of content for a social network (image plus caption) that goes through creation, Approval and publishing.
+_Avoid_: Publication, piece
+_Status_: draft
+
+**Approval**:
+The Owner's explicit yes to a specific Post; nothing is published without it.
+_Avoid_: Confirmation, sign-off
 _Status_: draft
