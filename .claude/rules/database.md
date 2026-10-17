@@ -9,10 +9,8 @@ paths:
 
 # Database — Agent Design Guidelines
 
-> build101's database is TBD (see
-> [`docs/decisions/`](../../docs/decisions/README.md)); these rules assume
-> PostgreSQL and apply once a SQL database with migrations exists. Re-check the
-> dialect-specific parts if another SQL database is chosen.
+> build101 uses PostgreSQL on Supabase with Alembic migrations (see
+> [ADR 0003](../../docs/decisions/0003-database-supabase-sqlalchemy.md)).
 
 Guidelines for PostgreSQL schema design, constraint discipline, indexing, and
 migration hygiene. These rules are expressed at the SQL/schema level and apply

@@ -1,0 +1,146 @@
+# Post templates
+
+Branded image templates the Art Director chooses from. The LLM **never draws**. It picks a template, a photo, colors from the brand palette and short texts. The renderer produces the image deterministically. That's why output is consistent and text is always legible. See [ADR 0009](../decisions/0009-branded-templates-over-real-photos.md).
+
+## Common specs
+
+- Canvas: **1080 × 1350 px** (Instagram portrait 4:5). Output JPEG, quality 90.
+- Safe margin: 64 px on all sides for text and logo.
+- Fonts: the brand's `font_pair` (display font for headline, text font for the rest). See [../architecture/integrations.md](../architecture/integrations.md#renderer-html--image).
+- Colors: only `color_roles` from the render spec (background, text, accent), all from the Brand Brain palette. The renderer enforces contrast: if text/background contrast < 4.5:1, it swaps text to `#FFFFFF` or `#111111`, whichever is higher.
+- Logo: bottom-right (or as specified), max 160 px wide, on a soft scrim if placed over a photo.
+- Photo: `object-fit: cover` with `object-position` from `crop_focus`.
+- Text fitting: each slot has a max length (validated before render) and the CSS uses `clamp()` + auto-shrink (JS in the template reduces font size until the text fits its box, min size per slot).
+
+## Catalog (MVP)
+
+`TemplateId = "product_hero" | "promo_band" | "quote_card" | "split_story"`
+
+Priority: `product_hero` and `promo_band` are **Must**; `quote_card` and `split_story` are **Should**.
+
+### `product_hero`: Producto destacado
+
+Best for: product posts, new arrivals, behind-the-scenes with a strong photo.
+
+```text
+┌────────────────────────────┐
+│                            │
+│        FULL-BLEED          │
+│          PHOTO             │
+│                            │
+│                            │
+│▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓│ ← bottom gradient scrim (background color, 0→85%)
+│ HEADLINE IN DISPLAY FONT   │
+│ subheadline text font      │
+│                     [logo] │
+└────────────────────────────┘
+```
+
+| Slot | Required | Max chars | Notes |
+|---|---|---|---|
+| `headline` | yes | 40 | display font, 72–96 px |
+| `subheadline` | no | 60 | text font, 34–40 px |
+
+### `promo_band`: Promo
+
+Best for: discounts, limited offers, events with a date.
+
+```text
+┌────────────────────────────┐
+│ ┌──────┐                   │
+│ │15%OFF│  ← badge (accent) │
+│ └──────┘                   │
+│          PHOTO             │
+│                            │
+├────────────────────────────┤ ← solid band, background color, 38% height
+│ HEADLINE                   │
+│ detail line (dates, cond.) │
+│ [ CTA pill ]        [logo] │
+└────────────────────────────┘
+```
+
+| Slot | Required | Max chars | Notes |
+|---|---|---|---|
+| `badge` | yes | 12 | e.g. "15% OFF", "2x1", "NUEVO"; must come from the brief |
+| `headline` | yes | 36 | |
+| `detail` | no | 60 | "Solo este sábado y domingo" |
+| `cta` | no | 24 | "Escribinos por WhatsApp" |
+
+### `quote_card`: Frase / tip
+
+Best for: tips, values, testimonials, posts without a strong photo.
+
+```text
+┌────────────────────────────┐
+│                            │
+│  "                         │ ← big accent quote mark
+│   QUOTE OR TIP TEXT IN     │
+│   DISPLAY FONT, CENTERED   │
+│   UP TO 4 LINES            │
+│                            │
+│   — attribution            │
+│                            │
+│ ░░░░ small photo strip ░░░ │ ← optional 20% height photo strip
+│                     [logo] │
+└────────────────────────────┘
+```
+
+| Slot | Required | Max chars |
+|---|---|---|
+| `quote` | yes | 110 |
+| `attribution` | no | 40 |
+
+Photo optional (`photo_asset_id` may be null → no strip).
+
+### `split_story`: Antes/después, detalle, proceso
+
+Best for: workshop process, two products, detail shots.
+
+```text
+┌────────────────────────────┐
+│ HEADLINE (top band)        │
+├─────────────┬──────────────┤
+│             │              │
+│   PHOTO     │  label +     │
+│ (2/3 width) │  2–3 short   │
+│             │  bullets     │
+│             │              │
+├─────────────┴──────────────┤
+│                     [logo] │
+└────────────────────────────┘
+```
+
+| Slot | Required | Max chars |
+|---|---|---|
+| `headline` | yes | 40 |
+| `label` | no | 24 |
+| `bullets` | no | 3 × 32 (newline-separated) |
+
+## Template catalog as data
+
+The Art Director receives this catalog (generated from `app/rendering/catalog.py`, the same source the validator uses):
+
+```json
+[
+  {"id": "product_hero", "best_for": ["producto", "novedad", "taller con buena foto"],
+   "needs_photo": true,
+   "slots": {"headline": {"max": 40, "required": true}, "subheadline": {"max": 60, "required": false}}},
+  {"id": "promo_band", "best_for": ["promo", "descuento", "evento con fecha"],
+   "needs_photo": true,
+   "slots": {"badge": {"max": 12, "required": true}, "headline": {"max": 36, "required": true},
+             "detail": {"max": 60, "required": false}, "cta": {"max": 24, "required": false}}},
+  {"id": "quote_card", "best_for": ["tip", "frase", "valores", "testimonio", "sin buena foto"],
+   "needs_photo": false,
+   "slots": {"quote": {"max": 110, "required": true}, "attribution": {"max": 40, "required": false}}},
+  {"id": "split_story", "best_for": ["proceso", "detalle", "comparación"],
+   "needs_photo": true,
+   "slots": {"headline": {"max": 40, "required": true}, "label": {"max": 24, "required": false},
+             "bullets": {"max": 100, "required": false}}}
+]
+```
+
+## Building templates fast
+
+- Write each template as a standalone HTML file that also renders in a normal browser with sample data (`/dev/templates/{id}?sample=1` on the backend serves it), so the designer track can iterate with live reload before the renderer is wired up.
+- Jinja variables: `{{ slots.headline }}`, `{{ colors.background }}`, `{{ photo_data_uri }}`, `{{ logo_data_uri }}`, `{{ fonts.display }}`, `{{ fonts.text }}`, `{{ crop_position }}`.
+- Test every template with: a long headline at max length, a very light photo, a very dark photo, a logo with transparency, and the 4 font pairs.

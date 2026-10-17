@@ -941,7 +941,7 @@ why.
 | Build backend | TBD |
 | Test runner | pytest |
 | Linter/formatter | ruff |
-| Database / ORM | TBD — see [`docs/decisions/`](../../docs/decisions/README.md) |
+| Database / ORM | PostgreSQL (Supabase) + SQLAlchemy 2 async + Alembic — see [ADR 0003](../../docs/decisions/0003-database-supabase-sqlalchemy.md) |
 
 FastAPI-specific conventions are not yet defined; record them as an ADR in
 [`docs/decisions/`](../../docs/decisions/README.md) when decided.

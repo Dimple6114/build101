@@ -9,10 +9,11 @@ How the build101 team works. This file is the single source of truth for the wor
 | [`docs/`](docs/README.md) | Shared knowledge base: idea, competitors, open questions, research, decisions. Start here |
 | [`docs/research/`](docs/research/README.md) | Investigations, spikes, competitor/market/tech research, policy reading |
 | [`docs/decisions/`](docs/decisions/README.md) | ADRs (`NNNN-short-title.md`) + template + index |
+| [`docs/product/`](docs/product/README.md), [`architecture/`](docs/architecture/README.md), [`design/`](docs/design/README.md), [`implementation/`](docs/implementation/README.md) | MVP spec: scope and flows, contracts, design, 24h plan and tasks |
 | [`docs/glossary.md`](docs/glossary.md) | Shared domain language (Owner, Business, Channel, ...) |
 | [`docs/open-questions.md`](docs/open-questions.md) | Risks and unknowns still to resolve |
 | [`backend/`](backend/README.md) | Agent, integrations, APIs (Python + FastAPI, uv project root) |
-| [`frontend/`](frontend/README.md) | Owner-facing UI / demo surface (stack TBD) |
+| [`frontend/`](frontend/README.md) | Owner-facing web: onboarding form, dashboard, WhatsApp simulator (Next.js, [ADR 0004](docs/decisions/0004-frontend-nextjs-vercel.md)) |
 | [`.claude/skills/`](.claude/skills/README.md) | Agent skills that automate the steps below; plain Markdown, readable by anyone |
 | [`.claude/rules/`](.claude/rules/README.md) | Path-scoped coding rules (Python, database, Docker, CI) |
 | [`.github/workflows/ci.yml`](.github/workflows/ci.yml) | CI: markdownlint, docs index check, actionlint; one aggregate `CI` check |
@@ -110,6 +111,22 @@ Not every change walks all seven steps: a typo fix goes straight to 5. Anything 
 - **Use glossary terms** in code, docs, issues and PRs; challenge a term in an issue instead of inventing a synonym.
 - **Public repo**: no secrets, credentials, tokens or personal data. `.env` is never committed (use `.env.example`).
 - **AI output is reviewed by a human** before it lands in `docs/`, code, issues or PRs.
+
+## Building the MVP
+
+Rules for anyone (human or agent) writing MVP code. The spec is in [`docs/`](docs/README.md); start from your task in [`docs/implementation/tasks.md`](docs/implementation/tasks.md) and read the docs it links.
+
+- **Contracts are the source of truth**: [`api.md`](docs/architecture/api.md), [`agents.md`](docs/architecture/agents.md), [`data-model.md`](docs/architecture/data-model.md). If code and docs disagree, fix one of them in the same PR.
+- **Respect the scope** in [`mvp.md`](docs/product/mvp.md) (Must / Should / Could / Won't); don't build Won't items.
+- **Approval is enforced in code** ([ADR 0007](docs/decisions/0007-approve-every-post.md)): nothing calls the publisher unless the Post is approved. Never let an LLM decide that.
+- **Deterministic first**: buttons, onboarding steps, state transitions and publishing are plain code; LLMs handle free text, planning, writing and design choices.
+- **All Claude calls go through `backend/app/llm/client.py`**, following [agents.md § LLM client conventions](docs/architecture/agents.md#llm-client-conventions). Check the current Claude API docs before changing a model or parameter.
+- **External services only behind ports** (`ChannelPort`, `PublisherPort`). Keep the WhatsApp simulator and the mock publisher working: they are the demo fallback.
+- **Webhooks return 200 fast**; real work goes to the job runner; inbound WhatsApp messages are deduplicated by message id.
+- **Owner-facing text is Rioplatense Spanish** (*vos*), short, per [`conversation-design.md`](docs/product/conversation-design.md); fixed messages live in `backend/app/copy/messages_es.py`. Code, identifiers and prompt instructions are in English.
+- **Agents never invent facts** (prices, discounts, dates, awards); they only use the Brand Brain and the Owner's brief.
+- **One backend instance** ([ADR 0005](docs/decisions/0005-single-instance-in-process-jobs.md)).
+- **Tests**: pytest for deterministic backend logic; live LLM tests are marked `@pytest.mark.live`; no frontend tests.
 
 ## For AI agents
 
