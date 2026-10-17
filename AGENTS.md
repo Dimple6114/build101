@@ -25,8 +25,8 @@ How the build101 team works. This file is the single source of truth for the wor
 | 2 | Research | `docs/research/` + README indexes, summary in top-level docs | `docs-index` |
 | 3 | Decide | ADR in `docs/decisions/`, terms in `docs/glossary.md` | `grill-with-docs`, `domain-modeling` |
 | 4 | Plan | GitHub issues with acceptance criteria | `ticket-refinement` |
-| 5 | Build | Branch + commits in `backend/` / `frontend/` | `configure-dependency` (+ rules) |
-| 6 | Review | PR with review comments resolved | `code-review`, `address-pr-comments` |
+| 5 | Build | Branch + commits in `backend/` / `frontend/` | `configure-dependency` (+ rules); frontend: `impeccable`, `shadcn`, `vercel-react-best-practices`, `next-dev-loop` |
+| 6 | Review | PR with review comments resolved | `code-review`, `address-pr-comments`; frontend: `web-design-guidelines` |
 | 7 | Close the loop | `docs/` updated in the same PR | `docs-index`, `domain-modeling` |
 
 Not every change walks all seven steps: a typo fix goes straight to 5. Anything that changes what we build or why passes through 3.
@@ -81,7 +81,7 @@ Not every change walks all seven steps: a typo fix goes straight to 5. Anything 
   4. Follow the matching rule file in [`.claude/rules/`](.claude/rules/README.md) (Python, database, Docker, CI). Claude Code loads them automatically; everyone else reads the one matching the files they touch.
   5. Backend commands run from `backend/` (per [python.md](.claude/rules/python.md)): `uv run ruff check .` clean and `uv run pytest tests/ -v` green before committing; never call `python3` directly, use `uv run python`.
 - **Done when**: acceptance criteria met, lint clean, tests green.
-- **With Claude Code**: `configure-dependency` for new dependencies (writes the ADR when it implies a stack choice). **Without it**: same steps by hand.
+- **With Claude Code**: `configure-dependency` for new dependencies (writes the ADR when it implies a stack choice). Frontend work: `impeccable` for design (`/impeccable init` once to write `PRODUCT.md`, then `shape` before building and `polish` before the PR), `shadcn` for components, `vercel-react-best-practices` while writing React, `next-dev-loop` to verify each change in the running app, and `web-design-guidelines` as a UI/accessibility check before opening the PR. **Without it**: same steps by hand.
 
 ### 6. Review
 
