@@ -1,6 +1,6 @@
 # build101
 
-An owner-facing AI operations assistant for small businesses, living in the chat app the owner already uses.
+An AI community manager for small businesses: the owner sends photos on WhatsApp, a team of AI agents runs their Instagram.
 
 > Status: **idea refinement**. Nothing is decided yet — start in [`docs/`](docs/).
 
