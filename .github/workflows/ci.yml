@@ -1,0 +1,120 @@
+# CI for build101. Adapted from guidodinello/dev-standards
+# (templates/ci/python-ci.yml). Follows .claude/rules/ci.md: path filtering behind a
+# `changes` job, least-privilege token, and one aggregate `CI` gate that a
+# branch ruleset can require instead of every job name.
+#
+# Today the repo is docs-first, so the jobs check docs and workflows. Add the
+# backend (ruff + pytest, working-directory: backend) and frontend jobs in the
+# PR that scaffolds each project, and list them in the `CI` gate's `needs:`.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# Superseded pull_request runs are cancelled. Every other event gets a unique
+# group, so a push to main is never dropped in favour of a newer pending run.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  changes:
+    name: Detect changes
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      markdown: ${{ steps.filter.outputs.markdown }}
+      workflows: ${{ steps.filter.outputs.workflows }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dorny/paths-filter@v4
+        id: filter
+        with:
+          filters: |
+            markdown:
+              - '**/*.md'
+              - '.markdownlint.yaml'
+              - 'scripts/check_docs_index.py'
+              - '.github/workflows/ci.yml'
+            workflows:
+              - '.github/workflows/**'
+
+  lint-markdown:
+    name: Lint Markdown
+    needs: changes
+    if: needs.changes.outputs.markdown == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      # Whole tree, not only changed files: it is fast, and a rule change in
+      # .markdownlint.yaml must be checked against every file.
+      - name: markdownlint
+        run: npx --yes markdownlint-cli@0.49.0 '**/*.md' --dot --ignore node_modules --ignore .venv --ignore .git
+
+  docs-index:
+    name: Docs index
+    needs: changes
+    if: needs.changes.outputs.markdown == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v7
+
+      # Every docs/ folder has a README index that links its contents, and
+      # every relative link resolves (AGENTS.md, Golden rules).
+      - name: Check docs indexes and relative links
+        run: uv run --no-project python scripts/check_docs_index.py
+
+  lint-workflows:
+    name: Lint Workflows
+    needs: changes
+    if: needs.changes.outputs.workflows == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: actionlint
+        uses: docker://rhysd/actionlint:1.7.12
+        with:
+          args: -color
+
+  # Single stable check name for the branch ruleset. if: always() so it still
+  # runs (and fails) when a needed job fails; a skipped required check would
+  # count as passing. Skipped jobs (path filter said no) pass.
+  ci:
+    name: CI
+    needs:
+      - changes
+      - lint-markdown
+      - docs-index
+      - lint-workflows
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check results
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          read -ra results <<< "$RESULTS"
+          for r in "${results[@]}"; do
+            if [[ "$r" == "failure" || "$r" == "cancelled" ]]; then
+              echo "A required job finished as: $r"
+              exit 1
+            fi
+          done

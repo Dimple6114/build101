@@ -11,7 +11,8 @@ An owner-facing AI operations assistant for small businesses, living in the chat
 | [`docs/`](docs/) | The business side: problem, users, competitors, open questions, decisions |
 | [`backend/`](backend/) | Agent, integrations and APIs (Python + FastAPI, [ADR 0001](docs/decisions/0001-backend-python-fastapi.md); database TBD) |
 | [`frontend/`](frontend/) | Owner-facing UI / demo surface (stack TBD) |
-| [`.github/`](.github/) | Issue and PR templates, CI later |
+| [`.github/`](.github/) | Issue and PR templates, CI workflow, Dependabot |
+| [`scripts/`](scripts/) | Repo tooling, e.g. the docs index check CI runs |
 | [`.claude/skills/`](.claude/skills/) | Shared agent skills: grilling, domain modeling, issues, PR review, dependencies, docs conventions |
 | [`.claude/rules/`](.claude/rules/) | Path-scoped agent rules (Python, database, Docker, CI) that load when matching files are touched |
 | [`AGENTS.md`](AGENTS.md) | How we work: the shared workflow and conventions, for humans and any AI tool |

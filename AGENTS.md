@@ -15,6 +15,8 @@ How the build101 team works. This file is the single source of truth for the wor
 | [`frontend/`](frontend/README.md) | Owner-facing UI / demo surface (stack TBD) |
 | [`.claude/skills/`](.claude/skills/README.md) | Agent skills that automate the steps below; plain Markdown, readable by anyone |
 | [`.claude/rules/`](.claude/rules/README.md) | Path-scoped coding rules (Python, database, Docker, CI) |
+| [`.github/workflows/ci.yml`](.github/workflows/ci.yml) | CI: markdownlint, docs index check, actionlint; one aggregate `CI` check |
+| [`scripts/`](scripts/) | Repo tooling (e.g. `check_docs_index.py`) |
 | GitHub issues / PRs | Work items (issues) and changes under review (PRs) |
 
 ## The workflow loop
@@ -48,7 +50,7 @@ Not every change walks all seven steps: a typo fix goes straight to 5. Anything 
   4. Update the `README.md` index of every folder you touched.
   5. Add a one-line summary + link in the relevant top-level doc ([`competitors.md`](docs/competitors.md), [`idea.md`](docs/idea.md)).
   6. New unknowns go to [`open-questions.md`](docs/open-questions.md).
-- **Done when**: the doc is reachable from `docs/README.md` by following indexes, and every claim has a source.
+- **Done when**: the doc is reachable from `docs/README.md` by following indexes, and every claim has a source. CI checks the indexes and links; run it locally with `uv run --no-project python scripts/check_docs_index.py`.
 - **Public repo**: no personal data about interviewees or real users. Describe them generically (e.g. "owner of a small furniture business").
 - **With Claude Code**: use `docs-index`. **Without it**: follow [its conventions](.claude/skills/docs-index/SKILL.md) by hand.
 
@@ -80,7 +82,7 @@ Not every change walks all seven steps: a typo fix goes straight to 5. Anything 
   3. New dependency or integration: read the official docs first, pin the version, and record an ADR if it is a stack choice or carries lock-in.
   4. Follow the matching rule file in [`.claude/rules/`](.claude/rules/README.md) (Python, database, Docker, CI). Claude Code loads them automatically; everyone else reads the one matching the files they touch.
   5. Backend commands run from `backend/` (per [python.md](.claude/rules/python.md)): `uv run ruff check .` clean and `uv run pytest tests/ -v` green before committing; never call `python3` directly, use `uv run python`.
-- **Done when**: acceptance criteria met, lint clean, tests green.
+- **Done when**: acceptance criteria met, lint clean, tests green, and the `CI` check is green on the PR.
 - **With Claude Code**: `configure-dependency` for new dependencies (writes the ADR when it implies a stack choice). Frontend work: `impeccable` for design (`/impeccable init` once to write `PRODUCT.md`, then `shape` before building and `polish` before the PR), `shadcn` for components, `vercel-react-best-practices` while writing React, `next-dev-loop` to verify each change in the running app, and `web-design-guidelines` as a UI/accessibility check before opening the PR. **Without it**: same steps by hand.
 
 ### 6. Review
@@ -90,7 +92,7 @@ Not every change walks all seven steps: a typo fix goes straight to 5. Anything 
   1. Open a PR using the [template](.github/pull_request_template.md). Link the issue (`Closes #N`) and the relevant ADR or research.
   2. Reviewer reviews against this file, accepted ADRs and the rules; author answers every thread (fix, decline with reason, or clarify).
   3. Team convention (not enforced): **at least one approval, squash merge**.
-- **Done when**: every thread is answered and resolved, one approval, step 7 done.
+- **Done when**: every thread is answered and resolved, `CI` is green, one approval, step 7 done.
 - **With Claude Code**: reviewer runs `code-review`; author runs `address-pr-comments`. **Without it**: review and reply in the GitHub UI.
 
 ### 7. Close the loop
