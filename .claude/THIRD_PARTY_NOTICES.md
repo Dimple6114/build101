@@ -62,7 +62,7 @@ SOFTWARE.
 
 ## vercel/next.js
 
-Source: https://github.com/vercel/next.js (commit `e2e7393c1f8449759aa1ae502b64fd7e946fbf37`)
+Source: <https://github.com/vercel/next.js> (commit `e2e7393c1f8449759aa1ae502b64fd7e946fbf37`)
 Used in: skill `next-dev-loop` (unmodified)
 
 ```text
@@ -91,7 +91,7 @@ SOFTWARE.
 
 ## vercel-labs/agent-skills
 
-Source: https://github.com/vercel-labs/agent-skills (commit `063bee94c3f4df8453406c830b0a7df0f2860278`)
+Source: <https://github.com/vercel-labs/agent-skills> (commit `063bee94c3f4df8453406c830b0a7df0f2860278`)
 Used in: skills `vercel-react-best-practices`, `web-design-guidelines` (unmodified)
 
 The repository declares the MIT License in its README and in each skill's `license` field; it ships no LICENSE file, so the standard MIT text is reproduced here.
@@ -122,14 +122,14 @@ SOFTWARE.
 
 ## pbakaus/impeccable
 
-Source: https://github.com/pbakaus/impeccable (commit `08d5b470495d242ca0470f4aeae1956c3a074f83`, skill v4.6.0)
+Source: <https://github.com/pbakaus/impeccable> (commit `08d5b470495d242ca0470f4aeae1956c3a074f83`, skill v4.6.0)
 Used in: skill `impeccable` (unmodified)
 
 Copyright 2025 Paul Bakaus. Licensed under the Apache License, Version 2.0. The full license text is in [`skills/impeccable/LICENSE`](skills/impeccable/LICENSE) and the upstream notice in [`skills/impeccable/NOTICE.md`](skills/impeccable/NOTICE.md).
 
 ## shadcn-ui/ui
 
-Source: https://github.com/shadcn-ui/ui (commit `d2fba50ee5b9113008b5bb908563527b7efd2f27`)
+Source: <https://github.com/shadcn-ui/ui> (commit `d2fba50ee5b9113008b5bb908563527b7efd2f27`)
 Used in: skill `shadcn` (unmodified)
 
 ```text

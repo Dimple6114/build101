@@ -44,6 +44,7 @@ jobs:
             markdown:
               - '**/*.md'
               - '.markdownlint.yaml'
+              - '.markdownlintignore'
               - 'scripts/check_docs_index.py'
               - '.github/workflows/ci.yml'
             workflows:

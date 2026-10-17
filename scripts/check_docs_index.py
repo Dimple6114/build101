@@ -6,7 +6,8 @@ Enforces the AGENTS.md golden rules for docs/:
 2. Every other .md file in a folder is linked from that folder's README.md.
 3. Every subfolder is linked from its parent folder's README.md.
 4. Every relative link in a tracked Markdown file points at a file or folder
-   that exists (anchors and external URLs are not checked).
+   that exists (anchors and external URLs are not checked). Vendored skills
+   under .claude/skills/ are skipped, as in .markdownlintignore.
 
 Stdlib only. Run from the repo root:
 
@@ -19,6 +20,7 @@ import sys
 from pathlib import Path
 
 DOCS = Path("docs")
+VENDORED = Path(".claude/skills")
 # [text](target) and [text](<target>); images match too, and their paths must
 # exist as well.
 LINK = re.compile(r"\[[^\]]*\]\(<?([^)>\s]+)>?(?:\s+\"[^\"]*\")?\)")
@@ -33,7 +35,8 @@ def tracked_markdown() -> list[Path]:
         text=True,
         check=True,
     ).stdout
-    return [Path(line) for line in out.splitlines() if Path(line).is_file()]
+    paths = (Path(line) for line in out.splitlines())
+    return [p for p in paths if p.is_file() and not p.is_relative_to(VENDORED)]
 
 
 def links(md: Path) -> list[str]:
