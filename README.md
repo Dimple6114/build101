@@ -12,6 +12,7 @@ An owner-facing AI operations assistant for small businesses, living in the chat
 | [`backend/`](backend/) | Agent, integrations and APIs (stack TBD) |
 | [`frontend/`](frontend/) | Owner-facing UI / demo surface (stack TBD) |
 | [`.github/`](.github/) | Issue and PR templates, CI later |
+| [`.claude/skills/`](.claude/skills/) | Shared agent skills: grilling, domain modeling, issues, PR review, dependencies, docs conventions |
 
 ## How we work (for now)
 
