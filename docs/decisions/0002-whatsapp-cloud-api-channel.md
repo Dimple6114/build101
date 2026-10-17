@@ -1,7 +1,7 @@
 # 0002: WhatsApp as the channel from day one
 
 - Date: 2026-10-17
-- Status: accepted
+- Status: proposed
 
 ## Context
 

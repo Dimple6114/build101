@@ -1,7 +1,7 @@
 # 0010: Anthropic SDK with our own orchestration
 
 - Date: 2026-10-17
-- Status: accepted
+- Status: proposed
 
 ## Context
 

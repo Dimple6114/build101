@@ -1,7 +1,7 @@
 # 0004: Frontend in Next.js on Vercel
 
 - Date: 2026-10-17
-- Status: accepted
+- Status: proposed
 
 ## Context
 

@@ -1,7 +1,7 @@
 # 0007: Every post needs explicit approval
 
 - Date: 2026-10-17
-- Status: accepted
+- Status: proposed
 
 ## Context
 

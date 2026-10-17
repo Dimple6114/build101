@@ -1,7 +1,7 @@
 # 0003: Database on Supabase Postgres with SQLAlchemy and Alembic
 
 - Date: 2026-10-17
-- Status: accepted
+- Status: proposed
 
 ## Context
 

@@ -1,7 +1,7 @@
 # 0009: Branded HTML templates over the owner's real photos
 
 - Date: 2026-10-17
-- Status: accepted
+- Status: proposed
 
 ## Context
 

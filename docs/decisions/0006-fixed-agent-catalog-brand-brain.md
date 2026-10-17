@@ -1,7 +1,7 @@
 # 0006: Fixed agent catalog personalized by a Brand Brain
 
 - Date: 2026-10-17
-- Status: accepted
+- Status: proposed
 
 ## Context
 

@@ -1,7 +1,7 @@
 # 0005: One backend instance with in-process jobs for the MVP
 
 - Date: 2026-10-17
-- Status: accepted
+- Status: proposed
 
 ## Context
 

@@ -1,7 +1,7 @@
 # 0011: Hybrid onboarding (WhatsApp + magic-link web form)
 
 - Date: 2026-10-17
-- Status: accepted
+- Status: proposed
 
 ## Context
 

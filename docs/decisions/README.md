@@ -20,13 +20,13 @@ When an ADR is superseded, set its Status to `superseded`, add `- Superseded by:
 | ADR | Title | Status | Date |
 |---|---|---|---|
 | [0001](0001-backend-python-fastapi.md) | Backend in Python + FastAPI | accepted | 2026-10-17 |
-| [0002](0002-whatsapp-cloud-api-channel.md) | WhatsApp as the channel from day one | accepted | 2026-10-17 |
-| [0003](0003-database-supabase-sqlalchemy.md) | Database on Supabase Postgres with SQLAlchemy and Alembic | accepted | 2026-10-17 |
-| [0004](0004-frontend-nextjs-vercel.md) | Frontend in Next.js on Vercel | accepted | 2026-10-17 |
-| [0005](0005-single-instance-in-process-jobs.md) | One backend instance with in-process jobs for the MVP | accepted | 2026-10-17 |
-| [0006](0006-fixed-agent-catalog-brand-brain.md) | Fixed agent catalog personalized by a Brand Brain | accepted | 2026-10-17 |
-| [0007](0007-approve-every-post.md) | Every post needs explicit approval | accepted | 2026-10-17 |
-| [0008](0008-publishing-via-zernio.md) | Publish through Zernio | accepted | 2026-10-17 |
-| [0009](0009-branded-templates-over-real-photos.md) | Branded HTML templates over the Owner's real photos | accepted | 2026-10-17 |
-| [0010](0010-anthropic-sdk-own-orchestration.md) | Anthropic SDK with our own orchestration | accepted | 2026-10-17 |
-| [0011](0011-hybrid-onboarding.md) | Hybrid onboarding (WhatsApp + magic-link web form) | accepted | 2026-10-17 |
+| [0002](0002-whatsapp-cloud-api-channel.md) | WhatsApp as the channel from day one | proposed | 2026-10-17 |
+| [0003](0003-database-supabase-sqlalchemy.md) | Database on Supabase Postgres with SQLAlchemy and Alembic | proposed | 2026-10-17 |
+| [0004](0004-frontend-nextjs-vercel.md) | Frontend in Next.js on Vercel | proposed | 2026-10-17 |
+| [0005](0005-single-instance-in-process-jobs.md) | One backend instance with in-process jobs for the MVP | proposed | 2026-10-17 |
+| [0006](0006-fixed-agent-catalog-brand-brain.md) | Fixed agent catalog personalized by a Brand Brain | proposed | 2026-10-17 |
+| [0007](0007-approve-every-post.md) | Every post needs explicit approval | proposed | 2026-10-17 |
+| [0008](0008-publishing-via-zernio.md) | Publish through Zernio | proposed | 2026-10-17 |
+| [0009](0009-branded-templates-over-real-photos.md) | Branded HTML templates over the Owner's real photos | proposed | 2026-10-17 |
+| [0010](0010-anthropic-sdk-own-orchestration.md) | Anthropic SDK with our own orchestration | proposed | 2026-10-17 |
+| [0011](0011-hybrid-onboarding.md) | Hybrid onboarding (WhatsApp + magic-link web form) | proposed | 2026-10-17 |
