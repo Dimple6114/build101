@@ -16,4 +16,4 @@ The owner talks to the orchestrator on WhatsApp from the MVP, through the **Meta
 - Best possible demo of "zero learning curve".
 - Pre-hackathon setup needed: Meta app, permanent System User token, verified recipient numbers (max 5 on the test number).
 - Policy risk for a public launch stays open (see [open-questions.md](../open-questions.md)); our use case is task-specific, which fits the allowed use.
-- Proactive messages outside the 24h window need approved templates (post-MVP).
+- Proactive messages outside the 24h window need approved templates (post-MVP). Until then, notifications for posts scheduled beyond the window may not be delivered (see [integrations.md](../architecture/integrations.md#receiving)).
