@@ -71,7 +71,7 @@ Handling rules:
 - **Verify** `X-Hub-Signature-256` = `sha256=` + HMAC-SHA256(app secret, raw body). Compute on the raw bytes, before JSON parsing.
 - **Return 200 fast.** Meta retries on slow or failed responses, and that produces duplicates. Dedupe on `messages.id` (unique `messages.external_id`).
 - **Media download:** `GET /{version}/{media_id}` → `{"url": ...}`, then `GET url` with the same bearer token. URLs expire in minutes, so download immediately.
-- **24-hour window:** free-form messages can only be sent within 24 h of the owner's last message. Jobs finish within minutes, so this doesn't affect the demo. Outside the window we would need approved templates (Won't for the MVP).
+- **24-hour window:** free-form messages can only be sent within 24 h of the Owner's last message; outside it only approved templates go through (post-MVP, [ADR 0002](../decisions/0002-whatsapp-cloud-api-channel.md)). Job results arrive within minutes, so they are fine. **Scheduled posts are not**: the `published` / `publish_failed` notification for a post scheduled more than 24 h after the Owner's last message will be rejected. MVP behavior: send it anyway, and if Meta rejects it, log it and keep the status visible on the dashboard; the Owner sees it next time they write (the orchestrator mentions newly published posts). The demo only schedules within the window.
 
 ## Publishing provider: Zernio
 

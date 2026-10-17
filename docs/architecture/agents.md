@@ -265,7 +265,12 @@ Guards are in the tool implementations, not in the prompt: `publish_post` return
 - 1a9e… "Promo sillas" — approved — sin fecha
 </pending_posts>
 <instagram_connected>true</instagram_connected>
+<unannounced_results>
+- 3b7d… "Taller por dentro" — published — https://www.instagram.com/p/…
+</unannounced_results>
 ```
+
+`<unannounced_results>` lists scheduled posts whose `published` / `publish_failed` notification WhatsApp rejected (outside the 24-hour window, see [integrations.md](integrations.md#receiving)). The orchestrator mentions them in its next reply; the inbound handler then clears them.
 
 ## Job pipelines
 

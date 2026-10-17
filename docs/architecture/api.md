@@ -11,7 +11,7 @@ FastAPI. JSON in and out, `snake_case` fields. Errors use `{"error": {"code": ".
 | Web app (owner) | Magic-link token in the path: `/api/o/{token}/...`. Server hashes it, looks up `magic_links`, checks expiry → `business_id` |
 | Dev tools | Header `X-Dev-Token: $DEV_TOKEN`, only if `ENABLE_DEV_ENDPOINTS=true` |
 
-CORS: allow `FRONTEND_ORIGIN` (Vercel URL + `http://localhost:3000`).
+CORS: allow every origin in `FRONTEND_ORIGINS` (comma-separated: Vercel URL + `http://localhost:3000`).
 
 ## Endpoints
 
@@ -115,14 +115,14 @@ type SimMessage = {
 
 ## Button IDs
 
-Format: `<action>:<entity_id>` (≤ 256 chars). Parsed by `conversation/button_router.py`. Unknown or stale IDs (entity in a state that doesn't allow the action) → reply "Ese botón ya no está activo 🙂" and do nothing else.
+Format: `<action>:<entity_id>` (≤ 256 chars). Parsed by `conversation/button_router.py`. Unknown or stale IDs (entity in a state that doesn't allow the action) → send `stale_button` and do nothing else.
 
 | ID | Allowed when | Handler |
 |---|---|---|
 | `brand_ok` | `awaiting_brand_confirmation` | state → `active`, send `ready_first_plan` |
 | `brand_fix` | `awaiting_brand_confirmation` | `awaiting = brand_correction`, send `brand_fix_prompt` |
 | `plan_start` | active | enqueue `generate_plan`, send `plan_generating` |
-| `plan_later` | active | send short "Cuando quieras, escribime 'plan'" |
+| `plan_later` | active | send `plan_later` |
 | `plan_approve:{plan_id}` | plan `pending_approval` | plan → `approved`, create posts, enqueue `generate_post` sequentially, send `plan_approved` |
 | `plan_change:{plan_id}` | plan `pending_approval` | `awaiting = plan_feedback` |
 | `post_approve:{post_id}` | post `pending_approval` | post → `approved`, `approved_at = now()`, send `publish_when` / `publish_when_adhoc` |

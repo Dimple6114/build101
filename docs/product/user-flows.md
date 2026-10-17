@@ -109,14 +109,14 @@ Questionnaire (step 5):
 | ¿Hay algo que NO quieras que digamos o mostremos? | short text (optional) | e.g. "no hablar de precios" |
 | ¿Tenés alguna promo o novedad ahora? | short text (optional) | Feeds the first weekly plan |
 
-On submit: `POST /api/onboarding/complete` → state `generating_brand` → Flow 3 starts in the background.
+On submit: `POST /api/o/{token}/complete` → state `generating_brand` → Flow 3 starts in the background.
 
 ## Flow 3 — Brand Brain generation and confirmation
 
 1. *System runs the Asset Analyst on each uploaded image that doesn't have a description yet (parallel, max 5 concurrent).*
 2. *System runs the Brand Strategist with all onboarding data + asset descriptions → Brand Brain v1 (saved, versioned).*
-3. Bot sends to WhatsApp: "¡Listo! Esto es lo que entendí de tu marca 👇" + a short summary (tone in 3 words, audience, 3 content pillars, colors as emoji-free text) + buttons `[Sí, es mi marca]` `[Corregir algo]`. State → `awaiting_brand_confirmation`.
-4. `[Sí, es mi marca]` → state `active` → bot offers the first plan: "¿Arrancamos con el plan de esta semana?" `[Dale]` `[Más tarde]`.
+3. Bot sends `brand_summary`: the Brand Strategist's short summary (tone in 3 words, audience, 3 content pillars, colors as text) + buttons `[Sí, es mi marca]` `[Corregir algo]`. State → `awaiting_brand_confirmation`.
+4. `[Sí, es mi marca]` → state `active` → bot sends `ready_first_plan`.
 5. `[Corregir algo]` → `awaiting = brand_correction` → owner writes the correction → *Brand Strategist runs in "revise" mode (Brand Brain v2)* → back to step 3.
 
 Target time from form submit to summary: **< 60 s**.
@@ -125,7 +125,7 @@ Target time from form submit to summary: **< 60 s**.
 
 Trigger: `[Dale]` after onboarding, or free text like "armame el plan de la semana" (orchestrator → `plan_week`).
 
-1. Bot: "Dale, armo el plan de la semana ⏳".
+1. Bot sends `plan_generating`.
 2. *Content Strategist generates N items (N = posts per week from onboarding; demo default 3). Each item: date, pillar, format (single image), idea, angle, suggested photo asset IDs, suggested template.*
 3. Bot sends the plan as one message:
 
@@ -137,7 +137,7 @@ Trigger: `[Dale]` after onboarding, or free text like "armame el plan de la sema
    ```
 
    with buttons `[Aprobar plan]` `[Cambiar algo]`.
-4. `[Aprobar plan]` → plan `approved`, one `posts` row per item → bot: "¡Genial! Te mando las publicaciones a medida que estén listas" → Flow 5 for each post (sequentially, so previews arrive in order).
+4. `[Aprobar plan]` → plan `approved`, one `posts` row per item → bot sends `plan_approved` → Flow 5 for each post (sequentially, so previews arrive in order).
 5. `[Cambiar algo]` → `awaiting = plan_feedback` → owner: "cambiá la 2 por algo de la promo de sillas" → *Content Strategist revises* → step 3.
 
 ## Flow 5 — Post generation and approval
@@ -165,14 +165,14 @@ Target time per post: **< 45 s** from start to preview.
 
 ## Flow 6 — Change request (revision)
 
-1. Owner taps `[Cambiar]` → bot: "¿Qué le cambio? Podés decirme cosas como 'más corto', 'otra foto', 'mencioná el envío gratis'". `awaiting = post_feedback`.
+1. Owner taps `[Cambiar]` → bot sends `post_change_prompt`. `awaiting = post_feedback`.
 2. Owner writes feedback.
 3. System classifies the feedback (inside the revision job, one LLM call): `copy` / `image` / `both`.
    - `copy` → Copywriter revises with feedback + previous version.
    - `image` → Art Director re-picks photo/template/text; re-render.
    - `both` → both, copy first.
 4. `post_revisions` row saved (keeps history); `posts.revision += 1`; Flow 5 step 4 again.
-5. After 3 revisions, bot adds: "Si preferís, mandame una foto que te guste para este post 📸".
+5. After 3 revisions, bot also sends `revision_photo_hint`.
 
 Free-text approval: if the owner writes "dale, publicalo" while a single post is `pending_approval`, the orchestrator calls `approve_post(post_id)`. If several are pending, it asks which one, showing the list.
 
@@ -180,7 +180,7 @@ Free-text approval: if the owner writes "dale, publicalo" while a single post is
 
 Trigger: free text like "hacé un post para la promo del finde, 15% en sillas".
 
-1. Orchestrator calls `create_post(brief=..., when=null)`; bot: "¡Dale! Lo armo ⏳".
+1. Orchestrator calls `create_post(brief=..., when=null)`; bot sends `post_generating`.
 2. Flow 5 with the brief instead of a plan item. The Copywriter receives the brief verbatim plus the Brand Brain.
 3. If the request is missing something essential (e.g. "hacé un post de la promo" and there is no promo in the Brand Brain or chat), the orchestrator asks **one** short question before calling the tool.
 
@@ -188,19 +188,19 @@ Trigger: free text like "hacé un post para la promo del finde, 15% en sillas".
 
 After `[Aprobar]`:
 
-1. If the post has a planned date in the future → bot: "¿Lo programo para el martes 21 a las 19:00 o lo publico ya?" `[Programar]` `[Publicar ahora]`.
-   If not (ad-hoc) → `[Publicar ahora]` `[Programar]`.
-2. `[Publicar ahora]` → status `publishing` → Publisher service → on success `published`, store `external_post_id` + `permalink` → bot: "¡Publicado! 🎉 <permalink>".
-3. `[Programar]` → if planned date exists, use it; otherwise `awaiting = schedule_time` → owner: "el jueves a las 8 de la noche" → orchestrator parses to ISO datetime in the business timezone (`America/Montevideo`) → confirm → provider schedules → status `scheduled` → bot: "Listo, sale el jueves 23 a las 20:00 ✅".
-4. No Instagram connected → bot: "Para publicar necesito que conectes tu Instagram, es un toque: <link>". The post stays `approved`.
-5. Failure → status `failed` → bot: "Uy, Instagram no me dejó publicarlo (<short reason>). ¿Lo intento de nuevo?" `[Reintentar]`.
+1. If the post has a planned date in the future → bot sends `publish_when`.
+   If not (ad-hoc) → bot sends `publish_when_adhoc`.
+2. `[Publicar ahora]` → status `publishing` → Publisher service → on success `published`, store `external_post_id` + `permalink` → bot sends `published` with the permalink.
+3. `[Programar]` → if planned date exists, use it; otherwise `awaiting = schedule_time` → owner: "el jueves a las 8 de la noche" → orchestrator parses to ISO datetime in the business timezone (`America/Montevideo`) → confirm → provider schedules → status `scheduled` → bot sends `scheduled`. When the provider later reports the publish, the bot sends `published` (only deliverable inside the 24-hour window, see [integrations.md](../architecture/integrations.md#receiving)).
+4. No Instagram connected → bot sends `need_ig`. The post stays `approved`.
+5. Failure → status `failed` → bot sends `publish_failed`.
 
 ## Flow 9 — Owner sends a photo in the chat
 
 1. System downloads the media, stores it as a `brand_assets` row (`kind = photo`, `source = whatsapp`).
 2. *Asset Analyst describes it.*
 3. If a post is `pending_approval` and `awaiting = post_feedback`, or the caption says "usá esta para el post", the orchestrator uses it for that post (Art Director revision with `force_asset_id`).
-4. Otherwise bot: "¡Buenísima! La guardo para próximos posts 📸. ¿Querés que arme un post con esta foto?" `[Sí, armalo]` `[No, guardala]`.
+4. Otherwise bot sends `photo_saved`.
 
 ## Flow 10 — Everything else
 
@@ -208,9 +208,9 @@ After `[Aprobar]`:
 |---|---|
 | "¿Qué podés hacer?" / "ayuda" | Orchestrator explains the 4 things it does in ≤ 5 short lines |
 | "¿Qué tengo programado?" | `list_posts(status in [scheduled, approved, pending_approval])` → short list |
-| Brand change in chat ("ahora tenemos envío gratis a todo el país") | `update_brand_brain(change)` → Brand Brain new version → "Anotado ✍️, lo voy a tener en cuenta" |
-| Voice note | MVP: "Por ahora solo puedo leer mensajes de texto 🙏 ¿Me lo escribís?" (Could: transcribe) |
-| Sticker, video, location, document | Same polite "solo texto y fotos por ahora" |
+| Brand change in chat ("ahora tenemos envío gratis a todo el país") | `update_brand_brain(change)` → Brand Brain new version → orchestrator confirms in one short line |
+| Voice note | MVP: `unsupported_media` (Could: transcribe) |
+| Sticker, video, location, document | `unsupported_media` |
 | Out-of-scope request ("¿me hacés una factura?") | Explain what it does; no tool call |
 | Repeated webhook delivery | Ignored (idempotency on `wa_message_id`) |
 | Message while a job is running | Answered normally; jobs post their results when done |
