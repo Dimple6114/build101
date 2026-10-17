@@ -31,3 +31,6 @@ When an ADR is superseded, set its Status to `superseded`, add `- Superseded by:
 | [0010](0010-anthropic-sdk-own-orchestration.md) | Anthropic SDK with our own orchestration | proposed | 2026-10-17 |
 | [0011](0011-hybrid-onboarding.md) | Hybrid onboarding (WhatsApp + magic-link web form) | proposed | 2026-10-17 |
 | [0012](0012-catalog-content-dashboard-reels.md) | Catalog and content dashboard, with Reels from the Owner's videos | proposed | 2026-10-17 |
+| [0013](0013-focus-marketing.md) | Focus the MVP on marketing and social media | proposed | 2026-10-17 |
+| [0014](0014-whatsapp-cloud-api.md) | WhatsApp via the official Cloud API | proposed | 2026-10-17 |
+| [0015](0015-instagram-login.md) | Connect Instagram through Instagram Login | proposed | 2026-10-17 |

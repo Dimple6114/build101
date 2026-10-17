@@ -29,7 +29,7 @@ Goal: show **one real loop end to end**, live, with Katei's Instagram. Everythin
 
 ## Architecture (demo)
 
-```
+```text
 Owner (WhatsApp) ──► WhatsApp Cloud API ──webhook──► Backend
                                                      │
                                        Orchestrator (LLM, tool calling)

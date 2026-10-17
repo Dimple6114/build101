@@ -1,7 +1,7 @@
-# 0003: Connect Instagram through Instagram Login
+# 0015: Connect Instagram through Instagram Login
 
 - Date: 2026-10-17
-- Status: accepted
+- Status: proposed
 
 ## Context
 

@@ -1,7 +1,7 @@
-# 0001: Focus the MVP on marketing and social media
+# 0013: Focus the MVP on marketing and social media
 
 - Date: 2026-10-17
-- Status: accepted
+- Status: proposed
 
 ## Context
 

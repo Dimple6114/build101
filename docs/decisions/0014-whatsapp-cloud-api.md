@@ -1,7 +1,7 @@
-# 0002: WhatsApp via the official Cloud API
+# 0014: WhatsApp via the official Cloud API
 
 - Date: 2026-10-17
-- Status: accepted
+- Status: proposed
 
 ## Context
 
