@@ -9,7 +9,7 @@ description: >
   review comments. Use when asked to review a PR.
 ---
 
-> Adapted from [guidodinello/claude-dotfiles `code-review`](https://github.com/guidodinello/claude-dotfiles/tree/main/.claude/skills/code-review) (MIT, see [THIRD_PARTY_NOTICES](../THIRD_PARTY_NOTICES.md)).
+> Adapted from [guidodinello/claude-dotfiles `code-review`](https://github.com/guidodinello/claude-dotfiles/tree/main/.claude/skills/code-review) (MIT, see [THIRD_PARTY_NOTICES](../../THIRD_PARTY_NOTICES.md)).
 
 Provide a code review for the given pull request.
 

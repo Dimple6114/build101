@@ -8,7 +8,7 @@ description: >-
 disable-model-invocation: true
 ---
 
-> Adapted from [mattpocock/skills `grill-with-docs`](https://github.com/mattpocock/skills/tree/49dd158d1076134a641b33efb035946536778336/skills/engineering/grill-with-docs) and [`grilling`](https://github.com/mattpocock/skills/tree/49dd158d1076134a641b33efb035946536778336/skills/productivity/grilling) (MIT, see [THIRD_PARTY_NOTICES](../THIRD_PARTY_NOTICES.md)).
+> Adapted from [mattpocock/skills `grill-with-docs`](https://github.com/mattpocock/skills/tree/49dd158d1076134a641b33efb035946536778336/skills/engineering/grill-with-docs) and [`grilling`](https://github.com/mattpocock/skills/tree/49dd158d1076134a641b33efb035946536778336/skills/productivity/grilling) (MIT, see [THIRD_PARTY_NOTICES](../../THIRD_PARTY_NOTICES.md)).
 
 # Grill with docs
 

@@ -7,7 +7,7 @@ description: >-
   (ADR) in docs/decisions/.
 ---
 
-> Adapted from [mattpocock/skills `domain-modeling`](https://github.com/mattpocock/skills/tree/49dd158d1076134a641b33efb035946536778336/skills/engineering/domain-modeling) (MIT, see [THIRD_PARTY_NOTICES](../THIRD_PARTY_NOTICES.md)).
+> Adapted from [mattpocock/skills `domain-modeling`](https://github.com/mattpocock/skills/tree/49dd158d1076134a641b33efb035946536778336/skills/engineering/domain-modeling) (MIT, see [THIRD_PARTY_NOTICES](../../THIRD_PARTY_NOTICES.md)).
 
 # Domain Modeling
 

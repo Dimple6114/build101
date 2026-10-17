@@ -1,11 +1,11 @@
 # Third-party notices
 
-Some skills in this directory are adapted from MIT-licensed projects. Their license notices are reproduced below.
+Some skills, rules and guidance in this repository are adapted from MIT-licensed projects. Their license notices are reproduced below.
 
 ## mattpocock/skills
 
 Source: https://github.com/mattpocock/skills (commit `49dd158d1076134a641b33efb035946536778336`)
-Used in: `grill-with-docs`, `domain-modeling`
+Used in: skills `grill-with-docs`, `domain-modeling`
 
 ```text
 MIT License
@@ -34,7 +34,7 @@ SOFTWARE.
 ## guidodinello/claude-dotfiles
 
 Source: https://github.com/guidodinello/claude-dotfiles
-Used in: `ticket-refinement`, `code-review`, `address-pr-comments`, `configure-dependency`, `docs-index`
+Used in: skills `ticket-refinement`, `code-review`, `address-pr-comments`, `configure-dependency`, `docs-index`; rules `python.md`, `database.md`, `docker.md`, `ci.md`; the reasoning-discipline and debugging-patterns sections of the root `AGENTS.md`
 
 ```text
 MIT License

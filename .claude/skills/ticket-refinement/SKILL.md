@@ -13,7 +13,7 @@ description: >
   or updates the issue with the gh CLI.
 ---
 
-> Adapted from [guidodinello/claude-dotfiles `ticket-refinement`](https://github.com/guidodinello/claude-dotfiles/tree/main/.claude/skills/ticket-refinement) (MIT, see [THIRD_PARTY_NOTICES](../THIRD_PARTY_NOTICES.md)).
+> Adapted from [guidodinello/claude-dotfiles `ticket-refinement`](https://github.com/guidodinello/claude-dotfiles/tree/main/.claude/skills/ticket-refinement) (MIT, see [THIRD_PARTY_NOTICES](../../THIRD_PARTY_NOTICES.md)).
 
 # Ticket Refinement Skill
 

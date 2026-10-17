@@ -11,7 +11,7 @@ description: >-
   without preloading it into context.
 ---
 
-> Adapted from [guidodinello/claude-dotfiles `dev-docs-index`](https://github.com/guidodinello/claude-dotfiles/tree/main/.claude/skills/dev-docs-index) (MIT, see [THIRD_PARTY_NOTICES](../THIRD_PARTY_NOTICES.md)).
+> Adapted from [guidodinello/claude-dotfiles `dev-docs-index`](https://github.com/guidodinello/claude-dotfiles/tree/main/.claude/skills/dev-docs-index) (MIT, see [THIRD_PARTY_NOTICES](../../THIRD_PARTY_NOTICES.md)).
 
 # docs/ conventions
 

@@ -8,7 +8,7 @@ description: >
   and responded to (for example after the code-review skill posted findings).
 ---
 
-> Adapted from [guidodinello/claude-dotfiles `address-pr-comments`](https://github.com/guidodinello/claude-dotfiles/tree/main/.claude/skills/address-pr-comments) (MIT, see [THIRD_PARTY_NOTICES](../THIRD_PARTY_NOTICES.md)).
+> Adapted from [guidodinello/claude-dotfiles `address-pr-comments`](https://github.com/guidodinello/claude-dotfiles/tree/main/.claude/skills/address-pr-comments) (MIT, see [THIRD_PARTY_NOTICES](../../THIRD_PARTY_NOTICES.md)).
 
 # Address PR Comments
 
