@@ -92,7 +92,7 @@ SOFTWARE.
 ## vercel-labs/agent-skills
 
 Source: <https://github.com/vercel-labs/agent-skills> (commit `063bee94c3f4df8453406c830b0a7df0f2860278`)
-Used in: skills `vercel-react-best-practices`, `web-design-guidelines` (unmodified)
+Used in: skills `vercel-react-best-practices`, `web-design-guidelines` (`vercel-react-best-practices` trimmed: compiled `AGENTS.md` and contributor `README.md` removed, `SKILL.md` pointer to `AGENTS.md` dropped)
 
 The repository declares the MIT License in its README and in each skill's `license` field; it ships no LICENSE file, so the standard MIT text is reproduced here.
 
@@ -130,7 +130,7 @@ Copyright 2025 Paul Bakaus. Licensed under the Apache License, Version 2.0. The 
 ## shadcn-ui/ui
 
 Source: <https://github.com/shadcn-ui/ui> (commit `d2fba50ee5b9113008b5bb908563527b7efd2f27`)
-Used in: skill `shadcn` (unmodified)
+Used in: skill `shadcn` (trimmed: `evals/` and `agents/` removed)
 
 ```text
 MIT License
