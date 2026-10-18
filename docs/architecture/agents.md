@@ -6,7 +6,7 @@ The "agency" is one **orchestrator** (the account manager the owner talks to) pl
 
 ## Agent roster
 
-| Agent | Kind | Called by | Input → Output | Effort |
+| Agent | Kind | Called by | Input → Output | Thinking level |
 |---|---|---|---|---|
 | **Orchestrator** | Tool-use loop | Inbound handler | Conversation + context → reply text + tool calls | `low` |
 | **Asset Analyst** | Single call, vision, structured | `analyze_asset` job | Image, or video keyframes + metadata → description, tags, suggested Products, usable-for (+ Reel suitability) | `low` |
@@ -21,20 +21,20 @@ Not agents (deterministic services): **Image generator** (`ImageGenPort`: image 
 
 ## LLM client conventions
 
-All Claude calls go through `app/llm/client.py`. It's the only module that imports `anthropic`.
+All text LLM calls go through `app/llm/client.py` ([ADR 0023](../decisions/0023-gemini-text-llm.md)): the `ChatModel` port and its `GeminiChat` adapter. Facts behind these rules: [research/gemini-api.md](../research/gemini-api.md).
 
-- SDK: official `anthropic` Python SDK, `AsyncAnthropic` client. Read the key from `ANTHROPIC_API_KEY`.
-- Model: `claude-opus-5-5` for every agent (configurable per agent in `config.py`). Tune **effort** per agent (table above) rather than switching models. Thinking is always on in this model, so don't send `thinking: disabled` or `budget_tokens` (both return 400). Control depth with `output_config={"effort": ...}`.
-- **Structured output** for every specialist: Pydantic model → `output_config={"format": {"type": "json_schema", "schema": Model.model_json_schema()}}` (or `client.messages.parse(output_format=Model)`), then `Model.model_validate_json(...)`. Keep schemas simple: objects, strings, ints, enums, lists. Set `additionalProperties: false` and put every field in `required`.
-- **Refusal fallback**: enable server-side fallbacks on every call (`betas=["server-side-fallback-2026-07-01"]`, `fallbacks="default"` on `client.beta.messages.create`). Always check `stop_reason` (`refusal`, `max_tokens`) before reading content.
-- **Prompt caching**: top-level `cache_control={"type": "ephemeral"}`. Order the prompt stable → volatile: system prompt (static) → Brand Brain (per business) → dynamic context. Never put timestamps in the system prompt.
-- **Images**: pass by URL (`{"type": "image", "source": {"type": "url", "url": signed_url}}`) using a short-lived signed Supabase URL, or base64 for small files. Resize to max 1568 px on the long side before upload to save tokens.
-- **Video** (Could): Claude takes no video or audio input ([research/media-uploads.md](../research/media-uploads.md#what-claude-can-read)). Agents see a video as its ffprobe metadata plus keyframes (JPEG, ≤ 1568 px long edge) extracted by the Frame Extractor, each labeled with its offset in ms. No transcription in the MVP.
-- **Timeouts/retries**: SDK defaults (2 retries). Per-call timeout 90 s for specialists, 30 s per orchestrator step.
-- **Logging**: each call writes `agent_runs` (business_id, agent, model, effort, input JSON, output JSON, input/output/cache tokens, latency_ms, stop_reason, error).
-- **Max tokens**: 16000 for specialists, 4000 for orchestrator steps.
+- SDK: official `google-genai`, async client (`genai.Client(api_key=...).aio`), **Interactions API** (`client.aio.interactions.create`). Key: `GEMINI_API_KEY`, from a project with billing linked (shared with image generation, [ADR 0019](../decisions/0019-image-provider-gemini.md)). Never use the deprecated `google-generativeai`.
+- Model: `gemini-3.8-flash` (`GEMINI_CHAT_MODEL`) for every agent. Tune the **thinking level** per agent (table above: `low` / `medium` / `high`) with `generation_config={"thinking_level": ...}` rather than switching models. Thinking can't be turned off, and `max_output_tokens` counts thinking + output, so lower the level instead of capping tokens.
+- **Stateless history**: `store=False`; the conversation is ours and is resent as a list of steps (`user_input`, then the model's steps). **Store the model's steps unchanged, `thought` steps included**: they carry the signatures Gemini needs on later turns. Only a completed turn enters the history.
+- **Structured output** for every specialist: Pydantic model → `response_format={"type": "text", "mime_type": "application/json", "schema": Model.model_json_schema()}`, then `Model.model_validate_json(interaction.output_text)`. Keep schemas simple: objects, strings, ints, enums, lists; very large or deeply nested schemas are rejected. Validate values in code too.
+- **Errors**: no server-side refusal fallback. A non-`completed` status, an empty `output_text`, or an SDK/HTTP error raises `LLMError`; the Owner gets a fixed message from `copy/messages_es.py`.
+- **Caching**: order the prompt stable → volatile (system instruction → Brand Brain → dynamic context) so implicit context caching can hit. Never put timestamps in the system instruction.
+- **Images**: send as image content (signed Supabase URL, or base64 for small files). Resize to max 1568 px on the long side before upload to save tokens.
+- **Video** (Could): Gemini reads video natively, but agents still get ffprobe metadata plus keyframes from the Frame Extractor until the team decides otherwise ([ADR 0023](../decisions/0023-gemini-text-llm.md)).
+- **Timeouts**: 90 s for specialists, 60 s per orchestrator step. On the free tier, `gemini-3.8-flash` took 5–26 s per chat turn with ~400 thought tokens, and some turns went over 30 s (measured over WhatsApp on 2026-10-17); the typing indicator stays on while it runs.
+- **Logging**: each call writes `agent_runs` (business_id, agent, model, thinking level, input JSON, output JSON, input/output/thought/cached tokens, latency_ms, status, error). Until T02 the client logs those fields.
 
-Before changing any of this, check the current Claude API docs. Model IDs and parameters change.
+Before changing any of this, check the current Gemini API docs (<https://ai.google.dev/gemini-api/docs>). Model IDs and parameters change.
 
 ## Brand Brain
 
@@ -306,7 +306,7 @@ Must (carousels, F4.9, [ADR 0022](../decisions/0022-carousels-in-mvp.md)). The o
       issues: list[str]
   ```
 
-- One structured `claude-opus-5-5` call with effort `low` ([LLM client conventions](#llm-client-conventions)), in `app/agents/text_checker.py`. `matches` is false when a word is missing, misspelled or added, or when other text (a price, a number, a logo) appears. Called by `CarouselGenerator`: a mismatch regenerates that slide once; if it still fails, the slide is kept with its `TextCheck` saved and flagged.
+- One structured `gemini-3.8-flash` call with thinking level `low` ([LLM client conventions](#llm-client-conventions)), in `app/agents/text_checker.py`. `matches` is false when a word is missing, misspelled or added, or when other text (a price, a number, a logo) appears. Called by `CarouselGenerator`: a mismatch regenerates that slide once; if it still fails, the slide is kept with its `TextCheck` saved and flagged.
 
 ## Orchestrator
 
@@ -317,9 +317,9 @@ A manual function-calling loop on Gemini's Interactions API (ADR 0023 and `docs/
 ```text
 run_turn(business, inbound_text):
     context = build_context(business)        # brand summary, pending posts, awaiting state, recent photos, now
-    steps = history + [user_input: inbound_text (+ pending-state note)]
+    steps = history + [user_input: inbound_text (+ pending-state note) + context]
     for step in range(MAX_STEPS = 5):
-        interaction = llm.create(system_instruction=[static_prompt, brand_block, dynamic_block],
+        interaction = llm.create(system_instruction=static_prompt + brand_block,
                                  tools=REGISTERED_TOOLS, input=steps, store=False)
         if status != "completed": send the fixed fallback message; stop (history unchanged)
         append the model's steps (thought steps included) to steps
@@ -329,6 +329,8 @@ run_turn(business, inbound_text):
     if reply: channel.send_text(reply); store the turn's steps in the history
 ```
 
+- **The context block** ([below](#context-block-dynamic-after-the-cache-breakpoint)) rides on the current user step only and is not stored with it, so the system instruction and the stored history stay identical from turn to turn and Gemini's implicit caching can hit (T56).
+- **Job results in the history (T56).** A job that sends the Owner something (a post's images, or a failure) also adds a note to the history as a `user_input` step marked `[post <id> sent to the Owner]` / `[post <id> failed]`, so the next turn knows what the Owner is looking at. The system prompt says notes are not the Owner's words.
 - **Voice notes** arrive as their transcript ([integrations.md](integrations.md#speech-to-text)). In the history and the current turn they are prefixed with `[audio]`, and the prompt says a transcript can mishear names, numbers and prices: before using a price, date or quantity heard in a voice note that looks off or ambiguous, confirm it as part of the one allowed question.
 - The model's steps are stored and resent unchanged, `thought` steps included, because they carry the signatures Gemini needs on later turns (ADR 0023, PR #18). Only a completed turn enters the history.
 - Tools are function declarations (`{"type": "function", "name", "description", "parameters"}`) with `additionalProperties: false` in every object. The model decides whether to call one; we never force a call.
@@ -351,7 +353,9 @@ The `create_post` description tells the model when to call it ("only when the Ow
 From the second design pass ([../design/mockups/](../design/mockups/README.md), rows 1 and 1b). They live in `prompts/system.md`, with the guards in code.
 
 - **Open chat after onboarding (Must, F1.10).** Once the Owner confirms the Brand Brain, the bot sends `ready_open_chat` ("¿En qué te puedo ayudar hoy?") and waits. Nothing proposes or generates a weekly plan unless the Owner asks for one.
-- **A post from photos and a request (Must, F4.5).** The Owner sends one or more photos and asks for a post in their own words ("me llegó esta mesa ratona nueva, armame algo para subir"), or only writes the request. Photos the Owner just sent appear in `<recent_photos>`; the model passes them to `create_post` as `asset_ids`.
+- **A post from photos and a request (Must, F4.5).** The Owner sends one or more photos and asks for a post in their own words ("me llegó esta mesa ratona nueva, armame algo para subir"), or only writes the request. Photos the Owner just sent appear in `<recent_photos>`; the model passes them to `create_post` as `asset_ids`. One photo makes a single-image post; several make a carousel with one slide per photo (product decision, 2026-10-17).
+- **Photos as they are, or a design (Must, 2026-10-17).** `create_post` takes a `style`: `photos` posts the Owner's photos cropped to 4:5 with a caption (no image generation); `design` makes new images from them with text on them. When the Owner hasn't said which, the bot's one question offers both, plus 3–5 numbered ideas for the post based on the photos (the orchestrator sees each photo once, attached to the turn it arrives in); the Owner's pick becomes the brief.
+- **Delivery (2026-10-17).** The finished post arrives as its images in order, numbered "1/3", "2/3"… on a carousel, with the caption and hashtags as the first image's caption, so no separate text can arrive before the images (a text WhatsApp's 1024-character caption can't hold follows the images).
 - **At most one question (Must).** Before `create_post`, ask **one** short question only when the answer changes the result: the angle (novedad, promo, detrás de escena), a price or condition the Owner hasn't given, or what to highlight. Otherwise create right away and say so ("Dale, lo armo con la foto del detalle de la veta ⏳"). Never a second question for the same post; missing details become a neutral choice.
 - **Approve and publish by writing (Must, F5.6).** While a post is `pending_approval`, an explicit approval in text maps to the same handlers as the buttons: "subilo", "publicalo", "dale, subila" → `approve_post(next = "publish_now")`. Praise without an instruction ("me encanta", "está lindo") is not approval: the bot asks "¿Lo subo?". An approval with a time ("subilo mañana a la tarde") → `approve_post(next = "schedule", when = ...)` (Should, F5.3); until scheduling exists the bot publishes only on an explicit "ahora". If more than one post is pending, the bot asks which one.
 - **Match the Owner's style (Should, F1.9).** Replies mirror how the Owner writes: short and casual when they write two words ("subila" → "arriba ✅"), fuller when they write long messages. `<owner_style>` in the context block gives the hint. Post captions keep the Brand Brain voice regardless.
@@ -385,7 +389,7 @@ From the second design pass ([../design/mockups/](../design/mockups/README.md), 
 
 Tools that are not built yet are not registered, so the model can't call them; the system prompt only describes registered tools.
 
-Guards are in the tool implementations, not in the prompt. `create_post` returns `{"error": "generation_in_progress"}` while another post or carousel of the same Business is still generating, `{"error": "daily_limit"}` once the Business has started `MAX_POSTS_PER_DAY` generations today (in its timezone), and `{"error": "unknown_asset"}` for an `asset_ids` entry that isn't one of that Business's photos; in each case nothing is generated and the model tells the Owner. `publish_post` returns `{"error": "post_not_approved"}` if the status is wrong, and the model must relay that. `approve_post` called from free text (not a button) is accepted only when the Owner's last message is an explicit approval of that post ([ADR 0007](../decisions/0007-approve-every-post.md)): the inbound handler marks the turn with `explicit_approval = true` when the message matches an approval phrase ("subilo", "publicalo", "dale, subila", "aprobado") and only one post is `pending_approval`, or the Owner named which one; otherwise the tool returns `{"error": "approval_not_explicit"}` and the bot asks. An image Post with several variations and none picked yet can't be approved: `approve_post` returns `{"error": "variation_not_picked"}` and the bot asks which one. `save_product`, `save_offer` and `save_brand_colors` never persist active data without `confirmed = true`, and the inbound handler rejects `confirmed = true` unless the Owner's last message is an explicit yes (button reply or affirmative text).
+Guards are in the tool implementations, not in the prompt. `create_post` returns `{"error": "generation_in_progress"}` while another post or carousel of the same Business is still generating, `{"error": "daily_limit"}` once the Business has started `MAX_POSTS_PER_DAY` image generations today (in its timezone; a post of the Owner's photos as they are generates no image and doesn't count), and `{"error": "unknown_asset"}` for an `asset_ids` entry that isn't one of that Business's photos; in each case nothing is generated and the model tells the Owner. `publish_post` returns `{"error": "post_not_approved"}` if the status is wrong, and the model must relay that. `approve_post` called from free text (not a button) is accepted only when the Owner's last message is an explicit approval of that post ([ADR 0007](../decisions/0007-approve-every-post.md)): the inbound handler marks the turn with `explicit_approval = true` when the message matches an approval phrase ("subilo", "publicalo", "dale, subila", "aprobado") and only one post is `pending_approval`, or the Owner named which one; otherwise the tool returns `{"error": "approval_not_explicit"}` and the bot asks. An image Post with several variations and none picked yet can't be approved: `approve_post` returns `{"error": "variation_not_picked"}` and the bot asks which one. `save_product`, `save_offer` and `save_brand_colors` never persist active data without `confirmed = true`, and the inbound handler rejects `confirmed = true` unless the Owner's last message is an explicit yes (button reply or affirmative text).
 
 **Photos sent with a request.** WhatsApp delivers each photo as its own message, with the caption (if any) on one of them. The inbound handler stores each photo as a Brand asset (`source = 'whatsapp'`), enqueues `analyze_asset`, and waits a short debounce (5 s after the last photo) before deciding: if any photo has a caption, or a text or a voice note (its transcript) arrives within the debounce, one orchestrator turn runs with all those photos in `<recent_photos>`; if not, the bot sends `photo_saved` once for the batch with its `[Sí, armalo]` button (Flow 9). `generate_post` waits up to 30 s for the candidate photos' `analyze_asset` jobs, then proceeds with whatever analyses exist (the Art Director sees the images anyway).
 

@@ -8,10 +8,12 @@ from typing import Annotated, Any
 from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Request
 
 from app.config import Settings, get_settings
+from app.conversation.factory import build_inbound_handler
+from app.media.public import get_public_images
 
 from .base import ChannelPort, InboundMessage
 from .factory import build_channel
-from .inbound import DedupeStore, EchoHandler, InboundHandler, InMemoryDedupeStore, mask
+from .inbound import DedupeStore, InboundHandler, InMemoryDedupeStore, mask
 from .kapso_webhook import MESSAGE_RECEIVED_EVENT, parse_message, verify_signature
 
 logger = logging.getLogger(__name__)
@@ -29,11 +31,14 @@ def get_dedupe_store() -> DedupeStore:
 
 @cache
 def get_inbound_handler() -> InboundHandler:
-    return EchoHandler()
+    return build_inbound_handler(get_settings(), get_public_images())
 
 
 @asynccontextmanager
-async def lifespan(_: Any) -> AsyncIterator[None]:
+async def lifespan(app: Any) -> AsyncIterator[None]:
+    # Built at boot so a missing GEMINI_API_KEY or PUBLIC_BACKEND_URL stops the app, instead of
+    # turning every webhook into a 500. Tests swap the handler through dependency_overrides.
+    app.dependency_overrides.get(get_inbound_handler, get_inbound_handler)()
     yield
     # Close the HTTP clients only if a request ever built the channel.
     if get_channel.cache_info().currsize:

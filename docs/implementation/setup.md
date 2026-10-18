@@ -22,9 +22,10 @@
 | `DATABASE_URL` | `postgresql+asyncpg://...pooler.supabase.com:5432/postgres` | Session pooler |
 | `SUPABASE_URL` | `https://xxxx.supabase.co` | |
 | `SUPABASE_SERVICE_ROLE_KEY` | `eyJ...` | Backend only |
-| `ANTHROPIC_API_KEY` | `sk-ant-...` | |
-| `LLM_MODEL` | `claude-opus-5-5` | Per-agent override: `LLM_MODEL_<AGENT>` |
-| `MAX_POSTS_PER_DAY` | `5` | Post and carousel generations a Business can start per day; `create_post` answers `daily_limit` past it ([agents.md](../architecture/agents.md#when-image-generation-runs)) |
+| `INBOUND_HANDLER` | `chat` \| `echo` | Default `chat`: answers with Gemini ([ADR 0023](../decisions/0023-gemini-text-llm.md)); `echo` repeats what arrived (channel tests, no LLM) |
+| `GEMINI_CHAT_MODEL` | `gemini-3.8-flash` | Text model; uses `GEMINI_API_KEY` |
+| `ASSISTANT_NAME` | `Mora` | Placeholder until the product name is chosen; shown in the welcome |
+| `MAX_POSTS_PER_DAY` | `5` | Designs (posts with AI-generated images: image Posts and carousels) a Business can start per day; posts of the Owner's photos as they are don't count. `create_post` answers `daily_limit` past it ([agents.md](../architecture/agents.md#when-image-generation-runs)) |
 | `WHATSAPP_CHANNEL` | `kapso` \| `simulator` | Default `kapso`. `simulator` arrives with T21 |
 | `KAPSO_API_KEY` | `...` | WhatsApp through Kapso ([ADR 0020](../decisions/0020-whatsapp-via-kapso.md)). Sent as the `X-API-Key` header ([API introduction](https://docs.kapso.ai/api/introduction.md)) |
 | `KAPSO_WEBHOOK_SECRET` | random | Webhook signing secret: `X-Webhook-Signature` is the hex HMAC-SHA256 of the raw body ([security](https://docs.kapso.ai/docs/platform/webhooks/security.md)). Without it every webhook gets `401` |
@@ -47,11 +48,10 @@
 | `ZERNIO_PROFILE_ID`, `ZERNIO_ACCOUNT_ID` | `...` | The single demo Instagram account's Zernio profile and account ids. Temporary: they stand in for `social_accounts` until T02 exists ([ADR 0024](../decisions/0024-mvp-single-demo-instagram-account.md)) |
 | `ZERNIO_TEST_IMAGE_URL` | `https://raw.githubusercontent.com/guidodinello/build101/main/backend/tests/fixtures/zernio-live-test.jpg` | Only for `uv run pytest -m live`: a public HTTPS URL serving the fixture JPEG with no redirect. Before the PR merges, put the branch name in place of `main` (the branch is deleted after the squash merge). The live publish posts to the real demo Instagram: delete the post by hand |
 | `ZERNIO_WEBHOOK_SECRET` | random | |
-| `ASSISTANT_NAME` | TBD | Shown in the welcome |
 | `ENABLE_DEV_ENDPOINTS` | `true` | `/dev/*` |
 | `DEV_TOKEN` | random | Header `X-Dev-Token` |
 | `MAX_CONCURRENT_JOBS` | `4` | |
-| `MAX_PHOTO_MB` | `10` | Rejected before the signed upload URL is issued |
+| `MAX_PHOTO_MB` | `10` | Rejected before the signed upload URL is issued; a WhatsApp photo over it gets `photo_too_big` without being downloaded (or after, when Kapso doesn't say its size) |
 | `MAX_AUDIO_MB` | `3` | Voice notes over it get `audio_too_long` (~25 min of WhatsApp Opus) |
 | `MAX_VIDEO_MB` | `300` | Could (video work). Must not exceed the Supabase Storage global file size limit |
 | `DASHBOARD_LINK_TTL_DAYS` | `7` | Should (read-only dashboard). Dashboard magic links expire after this |
@@ -105,7 +105,7 @@ Real WhatsApp against a local backend: `cloudflared tunnel --url http://localhos
 ```bash
 cd backend
 uv run pytest                   # unit tests (no network)
-uv run pytest -m live           # hits Claude, the image service and transcription; needs ANTHROPIC_API_KEY, GEMINI_API_KEY
+uv run pytest -m live           # hits Gemini (text, images, transcription) and Kapso; needs GEMINI_API_KEY
 uv run ruff check . && uv run ruff format --check .
 
 cd frontend
