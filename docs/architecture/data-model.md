@@ -2,7 +2,7 @@
 
 Postgres on Supabase ([ADR 0003](../decisions/0003-database-supabase-sqlalchemy.md)). The schema below is the **current schema**: the initial Alembic migration (`backend/migrations/versions/0001_initial.py`, executing its `.sql`) plus the later ones listed in [Migrations](#migrations). Every change is a new migration; never edit an applied one.
 
-Conventions follow [`.claude/rules/database.md`](../../.claude/rules/database.md): explicitly named constraints and indexes (`uq_`, `ck_`, `ix_`, `{table}_{col}_fkey`), every FK column indexed (or covered by a composite index or unique constraint that starts with it), `timestamptz` everywhere, enum-like values as `text` + `check`, JSON in `jsonb`. Primary keys are UUIDs rather than identity integers, because IDs travel in WhatsApp button payloads and URLs (see the ADR).
+Conventions follow [`.claude/rules/database.md`](../../.claude/rules/database.md): explicitly named constraints and indexes (`uq_`, `ck_`, `ix_`, `{table}_{col}_fkey`), every FK column indexed (or covered by a composite index or unique constraint that starts with it), `timestamptz` everywhere, enum-like values as `text` + `check`, JSON in `jsonb`. Primary keys are UUIDs rather than identity integers, because IDs travel in WhatsApp button payloads and URLs (see the ADR); `conversation_steps`, whose ids never leave the backend and only order the history, uses an identity key.
 
 ## Entity overview
 
@@ -54,6 +54,7 @@ create table businesses (
   onboarding_state   text not null default 'new',
   onboarding_data    jsonb not null default '{}',    -- raw wizard answers: questionnaire, 3 words, colors (products live in `products`); "instagram": the import (see Notes)
   conversation_state jsonb not null default '{}',    -- {"awaiting": "post_feedback", "post_id": "..."}
+  conversation_summary text,                         -- the orchestrator's summary of the steps compacted out of conversation_steps (ADR 0030, migration 0003)
   channel            text not null default 'whatsapp',
   plan               text not null default 'free',   -- future billing
   monthly_post_quota int  not null default 30,       -- future billing, not enforced
@@ -334,6 +335,26 @@ create table messages (
 );
 create index ix_messages_business_id_created_at on messages (business_id, created_at desc);
 
+-- The orchestrator's history, one Interactions API step per row, resent unchanged (ADR 0030, migration 0003)
+create table conversation_steps (
+  id           bigint generated always as identity primary key,
+  business_id  uuid not null constraint conversation_steps_business_id_fkey references businesses(id) on delete cascade,
+  step         jsonb not null,
+  created_at   timestamptz not null default now()
+);
+create index ix_conversation_steps_business_id_id on conversation_steps (business_id, id);
+
+-- Facts and standing preferences the Owner asked the orchestrator to keep (ADR 0030, migration 0003)
+create table owner_notes (
+  id           uuid primary key default gen_random_uuid(),
+  business_id  uuid not null constraint owner_notes_business_id_fkey references businesses(id) on delete cascade,
+  text         text not null,
+  created_at   timestamptz not null default now(),
+  archived_at  timestamptz,
+  constraint ck_owner_notes_text_not_blank check (length(trim(text)) > 0)
+);
+create index ix_owner_notes_business_id on owner_notes (business_id) where archived_at is null;
+
 create table jobs (
   id           uuid primary key default gen_random_uuid(),
   business_id  uuid constraint jobs_business_id_fkey references businesses(id) on delete cascade,
@@ -386,6 +407,7 @@ create index ix_agent_runs_job_id on agent_runs (job_id);
 - **Carousel slides** ([ADR 0022](../decisions/0022-carousels-in-mvp.md)): a carousel (`posts.format = 'carousel'`) has no Variations and leaves `posts.image_path` / `image_url` / `variation_n` null. `generate_post` writes one `post_slides` row per slide at `posts.revision`; `redo_slides` bumps the revision, writes the redone slides and copies the unchanged rows, so each revision is a complete carousel. The publisher reads the current revision's rows in `idx` order. Images are stored at `renders/{business_id}/{post_id}-r{revision}-s{idx}.jpg`. `text_check` stays null: since [ADR 0029](../decisions/0029-designed-slides-ai-scene-code-layout.md) the templates set the text, so there is nothing to check.
 - **Video frames**: the Asset Analyst saves the best frames of a video as `photo` assets with `derived_from_asset_id` and `frame_offset_ms` set, so the Art Director can use them like any photo.
 - **Build priority** ([ADR 0016](../decisions/0016-demo-scope-one-post.md)): the first migration creates the whole schema, including the Catalog, Offer, video and Reel columns from [ADR 0012](../decisions/0012-catalog-content-dashboard-reels.md), because a column costs nothing and a later migration mid-hackathon does. The Must scope only writes businesses, magic links, photos and logos (wizard and chat), Brand Brains, ad-hoc posts and the conversation tables; `products` holds the 1–5 wizard Products. The rest stays empty until its Could feature is built.
+- **The orchestrator's memory** ([ADR 0030](../decisions/0030-orchestrator-memory-and-context.md)): `conversation_steps` holds the model's own history (thought signatures included), which `messages` can't: `messages` is the normalized log of what crossed the channel. Old steps are deleted once folded into `businesses.conversation_summary`. Chat photos become `brand_assets` rows with `source = 'whatsapp'` and the Asset Analyst's `analysis`.
 - **Instagram import** ([ADR 0028](../decisions/0028-read-instagram-with-our-meta-app.md)): `import_instagram` writes `businesses.onboarding_data["instagram"]` = `{username, name, biography, website, followers_count, media_count, imported_at, posts: [{type, caption, likes, comments, timestamp, permalink}]}` (newest first, captions cut at 1,000 characters), and one `photo` Brand asset per imported image with `source = 'instagram'`, `external_id` = the media id and `owner_hint` = the post's caption (cut at 200). The wizard's photo counts and grid only see `source = 'web'`.
 - **Seed**: `backend/app/db/seed.py` creates the demo business with a pre-generated Brand Brain and plan (see the demo fallbacks in [../product/mvp.md](../product/mvp.md#demo-fallbacks)).
 
@@ -395,3 +417,4 @@ create index ix_agent_runs_job_id on agent_runs (job_id);
 |---|---|
 | `0001` | The whole schema above as first designed |
 | `0002` | Instagram import ([ADR 0028](../decisions/0028-read-instagram-with-our-meta-app.md)): `social_accounts.access_token`, `token_expires_at`, unique on `(business_id, platform, provider)`, RLS on; `brand_assets.external_id` and its partial unique index; job kind `import_instagram` |
+| `0003` | The orchestrator's memory ([ADR 0030](../decisions/0030-orchestrator-memory-and-context.md)): `conversation_steps`, `owner_notes`, `businesses.conversation_summary` |
