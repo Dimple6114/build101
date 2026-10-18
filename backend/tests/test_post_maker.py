@@ -1,16 +1,18 @@
 from datetime import datetime, timedelta
 
 import pytest
+from sqlalchemy.exc import OperationalError
 
+from app.agents.schemas import BrandBrain
 from app.conversation.events import Event, PostFailed, PostSent
 from app.conversation.photos import LOCAL_TZ, InMemoryPhotos
 from app.media.images import POST_SIZE, image_size
 from app.media.public import PublicImages
-from app.posts.drafts import CarouselDraft, PostCopy, PostDrafter, SlideDraft
+from app.posts.drafts import SYSTEM_PROMPT, CarouselDraft, PostCopy, PostDrafter, SlideDraft
 from app.posts.maker import WHATSAPP_CAPTION_MAX, PostMaker
 from app.posts.store import InMemoryPosts, Post, PostImage
 from tests.conftest import make_image
-from tests.fakes import CountingImageGen, FakeChannel, ScriptedModel
+from tests.fakes import CountingImageGen, FakeChannel, ScriptedModel, brand_brain
 
 SENDER = "59899000001"
 NOON = datetime(2026, 10, 17, 12, 0, tzinfo=LOCAL_TZ)
@@ -39,12 +41,19 @@ def maker(
     max_posts_per_day: int = 5,
     store: InMemoryPosts | None = None,
     events: list[Event] | None = None,
+    brand: BrandBrain | None = None,
+    brand_fails: bool = False,
 ) -> PostMaker:
     """A maker whose events go to `events` (a throwaway list when the test doesn't look)."""
     recorded = events if events is not None else []
 
     async def record(sender: str, event: Event, channel: object) -> None:
         recorded.append(event)
+
+    async def brand_of(sender: str) -> BrandBrain | None:
+        if brand_fails:
+            raise OperationalError("select", {}, ConnectionError("database down"))
+        return brand if sender == SENDER else None
 
     posts = PostMaker(
         PostDrafter(model),
@@ -54,6 +63,7 @@ def maker(
         store or InMemoryPosts(),
         "https://backend.test/",
         max_posts_per_day=max_posts_per_day,
+        brand_of=brand_of,
         now=lambda: NOON,
     )
     posts.on_event(record)
@@ -100,6 +110,73 @@ async def test_photos_as_they_are_make_a_carousel_with_the_text_on_the_first(
         "image",
         "image",
     ]
+
+
+@pytest.mark.parametrize("style", ["photos", "design"])
+async def test_the_post_is_written_with_the_owners_brand_brain(
+    photos: InMemoryPhotos, style: str
+) -> None:
+    brand = brand_brain(
+        voice=brand_brain().voice.model_copy(update={"dont": ["No usar 'barato'"]}),
+        constraints=["Sin mostrar caras"],
+    )
+    model = ScriptedModel(
+        drafts={
+            PostCopy: PostCopy(caption="Mesa de roble a medida", hashtags=["#muebles"]),
+            CarouselDraft: carousel_draft(3),
+        }
+    )
+    posts = maker(model, CountingImageGen(), photos, brand=brand)
+
+    posts.create_post(
+        SENDER, {"brief": "muebles", "asset_ids": ["f1", "f2", "f3"], "style": style}, FakeChannel()
+    )
+    await posts.join()
+
+    [system] = model.structured_systems
+    assert system.startswith(SYSTEM_PROMPT)
+    brain = system.removeprefix(SYSTEM_PROMPT)
+    assert "<brand_brain>" in brain
+    assert "No usar 'barato'" in brain
+    assert "Sin mostrar caras" in brain
+    assert "#111111" in brain
+    assert "luz natural" in brain
+    assert brand.whatsapp_summary not in brain
+    assert "preferred_time" not in brain
+
+
+async def test_without_a_brand_brain_the_post_gets_the_plain_instructions(
+    photos: InMemoryPhotos,
+) -> None:
+    model = ScriptedModel(
+        drafts={PostCopy: PostCopy(caption="Mesa de roble a medida", hashtags=["#muebles"])}
+    )
+    posts = maker(model, CountingImageGen(), photos)
+
+    posts.create_post(
+        SENDER, {"brief": "muebles", "asset_ids": ["f1"], "style": "photos"}, FakeChannel()
+    )
+    await posts.join()
+
+    assert model.structured_systems == [SYSTEM_PROMPT]
+
+
+async def test_a_post_goes_without_the_brand_brain_when_the_database_fails(
+    photos: InMemoryPhotos,
+) -> None:
+    model = ScriptedModel(
+        drafts={PostCopy: PostCopy(caption="Mesa de roble a medida", hashtags=["#muebles"])}
+    )
+    events: list[Event] = []
+    posts = maker(model, CountingImageGen(), photos, events=events, brand_fails=True)
+
+    posts.create_post(
+        SENDER, {"brief": "muebles", "asset_ids": ["f1"], "style": "photos"}, FakeChannel()
+    )
+    await posts.join()
+
+    assert model.structured_systems == [SYSTEM_PROMPT]
+    assert [type(event) for event in events] == [PostSent]
 
 
 async def test_one_photo_is_a_single_image_post_without_numbering(photos: InMemoryPhotos) -> None:

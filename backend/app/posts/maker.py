@@ -2,13 +2,15 @@ import asyncio
 import logging
 import time
 import uuid
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from sqlalchemy.exc import SQLAlchemyError
 
+from app.agents.schemas import BrandBrain
 from app.carousel.generator import CarouselGenerator
 from app.carousel.schemas import MAX_SLIDES
 from app.channels.base import ChannelPort
@@ -64,6 +66,7 @@ class PostMaker:
         posts: InMemoryPosts,
         public_base_url: str,
         max_posts_per_day: int,
+        brand_of: Callable[[str], Awaitable[BrandBrain | None]] | None = None,
         now: Callable[[], datetime] = local_now,
     ) -> None:
         self._drafter = drafter
@@ -73,6 +76,7 @@ class PostMaker:
         self._posts = posts
         self._public_base_url = public_base_url.rstrip("/")
         self._max_posts_per_day = max_posts_per_day
+        self._brand_of = brand_of
         self._now = now
         self._generating: set[str] = set()
         self._designs_today: dict[str, tuple[date, int]] = {}
@@ -146,7 +150,8 @@ class PostMaker:
         started = time.monotonic()
         event: Event
         try:
-            post = await self._render(args, photos)
+            brand = await self._brand(sender, post_id)
+            post = await self._render(args, photos, brand)
             paths = await self._send(sender, post.images, post.text, channel)
             self._keep(sender, post_id, args, photos, paths, post)
             event = PostSent(
@@ -175,6 +180,18 @@ class PostMaker:
         # failed post that the Owner already has.
         await self._announce(sender, post_id, event, channel)
 
+    async def _brand(self, sender: str, post_id: str) -> BrandBrain | None:
+        """The sender's Brand Brain; without it when the database fails, rather than no post."""
+        if self._brand_of is None:
+            return None
+        try:
+            return await self._brand_of(sender)
+        except SQLAlchemyError:
+            logger.warning(
+                "post %s for %s goes without the Brand Brain", post_id, mask(sender), exc_info=True
+            )
+            return None
+
     async def _announce(
         self, sender: str, post_id: str, event: Event, channel: ChannelPort
     ) -> None:
@@ -185,17 +202,19 @@ class PostMaker:
         except Exception:
             logger.exception("event for post %s failed for %s", post_id, mask(sender))
 
-    async def _render(self, args: CreatePostArgs, photos: list[Photo]) -> RenderedPost:
+    async def _render(
+        self, args: CreatePostArgs, photos: list[Photo], brand: BrandBrain | None
+    ) -> RenderedPost:
         """The post's images in order (one per photo, unless a design asks for a slide count)."""
         references = [photo.data for photo in photos]
         if args.style == "photos":
-            copy = await self._drafter.copy(args.brief, references)
+            copy = await self._drafter.copy(args.brief, references, brand)
             images = [await asyncio.to_thread(to_post_image, data) for data in references]
             return RenderedPost(images, post_text(copy.caption, copy.hashtags), headlines=[])
 
         count = args.slide_count or len(photos)
         copy, brief = await self._drafter.design(
-            args.brief, references, [photo.id for photo in photos], count
+            args.brief, references, [photo.id for photo in photos], count, brand
         )
         one_per_photo = len(photos) == count
         slides = await CarouselGenerator(self._image_gen).generate(
