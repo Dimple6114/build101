@@ -47,6 +47,7 @@ from app.posts.maker import PostMaker
 from app.posts.publish import PostPublisher
 from app.posts.store import InMemoryPosts, Post, PostImage
 from app.publishing.mock import MOCK_ACCOUNT_ID, MockPublisher
+from app.storage import StorageError
 from tests.conftest import FIXTURES, make_image
 from tests.fakes import (
     PERMALINK,
@@ -86,16 +87,27 @@ def message(name: str, **changes: object) -> InboundMessage:
 
 
 class FakeLibrary:
-    """The wizard's photos, as `BrandLibrary` returns them."""
+    """The wizard's photos and logo, as `BrandLibrary` returns them."""
 
-    def __init__(self, *descriptions: str) -> None:
+    def __init__(
+        self, *descriptions: str, logo: bytes | None = None, logo_fails_after: int | None = None
+    ) -> None:
         self._photos = [
             Photo(f"b{n}", make_image((900, 1200)), text, local_now(), seen=True)
             for n, text in enumerate(descriptions, start=1)
         ]
+        self._logo = logo
+        self._logo_fails_after = logo_fails_after
+        self._logo_calls = 0
 
     async def photos(self, sender: str) -> list[Photo]:
         return self._photos
+
+    async def logo(self, sender: str) -> bytes | None:
+        self._logo_calls += 1
+        if self._logo_fails_after is not None and self._logo_calls > self._logo_fails_after:
+            raise StorageError("download failed")
+        return self._logo
 
 
 def build(
@@ -987,3 +999,41 @@ async def test_a_noop_tap_gets_no_answer() -> None:
 
     assert model.calls == []
     assert channel.sent == []
+
+
+async def test_the_model_is_told_when_the_owner_uploaded_a_logo() -> None:
+    model = ScriptedModel()
+    chat, _ = build(model, library=FakeLibrary("Mesa", logo=make_image((200, 80), format="PNG")))
+
+    await chat.handle(message("text", text="ponele el logo"), FakeChannel())
+
+    assert "<brand_logo>uploaded</brand_logo>" in model.calls[0][-1]["content"][1]["text"]
+
+
+async def test_a_post_with_the_logo_needs_an_uploaded_logo() -> None:
+    model = ScriptedModel(
+        replies=[
+            call_reply(
+                "create_post", brief="mesa", asset_ids=["b1"], style="photos", with_logo=True
+            ),
+            text_reply("Todavía no tengo tu logo"),
+        ]
+    )
+    chat, posts = build(model, library=FakeLibrary("Mesa"))
+
+    await chat.handle(message("text", text="subí la mesa con mi logo"), FakeChannel())
+    await posts.join()
+
+    assert "<brand_logo>" not in model.calls[0][-1]["content"][1]["text"]
+    assert json.loads(model.calls[-1][-1]["result"]) == {"error": "no_logo"}
+
+
+async def test_a_failed_logo_download_keeps_the_logo_already_loaded() -> None:
+    model = ScriptedModel()
+    library = FakeLibrary("Mesa", logo=make_image((200, 80), format="PNG"), logo_fails_after=1)
+    chat, _ = build(model, library=library)
+
+    await chat.handle(message("text", text="hola"), FakeChannel())
+    await chat.handle(message("text", text="ponele el logo"), FakeChannel())
+
+    assert "<brand_logo>uploaded</brand_logo>" in model.calls[1][-1]["content"][1]["text"]
