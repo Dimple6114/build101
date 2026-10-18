@@ -12,10 +12,13 @@ from app.channels.router import get_channel
 from app.channels.router import router as whatsapp_router
 from app.config import get_settings
 from app.jobs.setup import build_job_runner
+from app.log_redaction import RedactQueryTokens
 from app.media.public import router as media_router
 
 # uvicorn configures only its own loggers; without this, `app.*` INFO lines are dropped.
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)-8s %(name)s — %(message)s")
+# httpx stays at INFO (its lines show Gemini/Kapso status codes) but must not log signed tokens.
+logging.getLogger("httpx").addFilter(RedactQueryTokens())
 
 logger = logging.getLogger(__name__)
 
