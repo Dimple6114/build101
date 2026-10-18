@@ -45,17 +45,19 @@ class PostDrafter:
     """Brief + photos + Brand Brain → the post's copy, and for a design the generator's input.
 
     One structured call, a stand-in for the Copywriter and the Art Director (T13, T14).
+    `trend_notes` come from the latest Niche Report (ADR 0025).
     """
 
-    def __init__(self, model: ChatModel) -> None:
+    def __init__(self, model: ChatModel, trend_notes: str | None = None) -> None:
         self._model = model
+        self._trend_notes = trend_notes
 
     async def copy(
         self, brief: str, photos: list[bytes], brand: BrandBrain | None = None
     ) -> PostCopy:
         request = (
             f"Write the caption for a post of {len(photos)} photo(s), posted as they are, "
-            f"without a design.\n\nBrief: {brief}"
+            f"without a design.\n\nBrief: {brief}{self._trend_section()}"
         )
         return await self._model.structured(
             AGENT, system_prompt(brand), request_content(request, photos), PostCopy, "medium"
@@ -75,7 +77,8 @@ class PostDrafter:
             else ""
         )
         request = (
-            f"A design of exactly {slide_count} slide(s) (4:5).{one_per_photo}\n\nBrief: {brief}"
+            f"A design of exactly {slide_count} slide(s) (4:5).{one_per_photo}\n\n"
+            f"Brief: {brief}{self._trend_section()}"
         )
         draft = await self._model.structured(
             AGENT, system_prompt(brand), request_content(request, photos), CarouselDraft, "medium"
@@ -99,6 +102,11 @@ class PostDrafter:
             style_notes=draft.style_notes,
         )
         return copy, carousel_brief
+
+    def _trend_section(self) -> str:
+        if not self._trend_notes:
+            return ""
+        return f"\n\nTrend notes (what works in the niche this week):\n{self._trend_notes}"
 
 
 def system_prompt(brand: BrandBrain | None) -> str:

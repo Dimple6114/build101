@@ -29,6 +29,15 @@ uv run python -m app.carousel.cli --spec tests/fixtures/carousel_spec.json \
 
 It writes `slide-N.jpg`, each slide's prompt and a `report.json` with latency, raw size and token usage per call. Live tests run with `uv run pytest -m live` (skipped without `GEMINI_API_KEY`).
 
+Write this week's Niche Report ([ADR 0025](../docs/decisions/0025-weekly-niche-report.md)) for a Business in a known niche; set `NICHE_REPORT_PATH=out/niche-report.json` and post generation gets its insights as trend notes:
+
+```bash
+uv run python -m app.agents.niche_cli --niche curated-wood-furniture-uy --name "Roble & Co" \
+  --category "muebles de madera maciza" --about "Mesas y aparadores a medida" --out out/niche-report.json
+```
+
+It needs `GEMINI_API_KEY` from a project with billing (Google Search grounding isn't on the free tier) and takes 30–100 s.
+
 ## Deploy
 
 The backend runs on Railway ([ADR 0017](../docs/decisions/0017-backend-host-railway.md)): project `build101`, service `backend`, environment `production`, one replica in `us-east4-eqdc4a` (Virginia; Railway has no South America region). The image is built from [`Dockerfile`](Dockerfile): two stages, uv with `--frozen`, non-root, one uvicorn worker on `0.0.0.0:$PORT` ([ADR 0005](../docs/decisions/0005-single-instance-in-process-jobs.md)).
