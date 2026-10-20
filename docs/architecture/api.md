@@ -1,6 +1,6 @@
 # Backend API
 
-FastAPI. JSON in and out, `snake_case` fields. Errors use `{"error": {"code": "...", "message": "..."}}` with a proper HTTP status. OpenAPI is served at `/docs`; the frontend's `lib/api.ts` has a Zod schema per response, written by hand from this document, and parses every response with it; its types are inferred from the schemas ([ADR 0034](../decisions/0034-zod-api-response-schemas.md), no codegen).
+FastAPI. JSON in and out, `snake_case` fields. Errors use `{"error": {"code": "...", "message": "..."}}` with a proper HTTP status. OpenAPI is served at `/docs` (and `/redoc`, `/openapi.json`) unless `ENV=prod`, where all three are off; the frontend's `lib/api.ts` has a Zod schema per response, written by hand from this document, and parses every response with it; its types are inferred from the schemas ([ADR 0034](../decisions/0034-zod-api-response-schemas.md), no codegen).
 
 ## Authentication
 
@@ -9,7 +9,7 @@ FastAPI. JSON in and out, `snake_case` fields. Errors use `{"error": {"code": ".
 | WhatsApp webhook (Kapso) | `X-Webhook-Signature`: hex HMAC-SHA256 of the **raw body** with `KAPSO_WEBHOOK_SECRET` (confirmed 2026-10-17, [Kapso's docs](https://docs.kapso.ai/docs/platform/webhooks/security.md)). `401` on a mismatch, a missing header or no configured secret. Plan B (Meta direct): `X-Hub-Signature-256` HMAC with `META_APP_SECRET` |
 | Zernio webhook | `X-Zernio-Signature` HMAC with `ZERNIO_WEBHOOK_SECRET` |
 | Web app (owner) | Magic-link token in the path: `/api/o/{token}/...`. Server hashes it, looks up `magic_links`, checks expiry → `business_id` |
-| Dev tools | Header `X-Dev-Token: $DEV_TOKEN`, only if `ENABLE_DEV_ENDPOINTS=true` |
+| Dev tools | Header `X-Dev-Token: $DEV_TOKEN`, only if `ENABLE_DEV_ENDPOINTS=true` and `ENV` is not `prod` (404 otherwise) |
 
 CORS: allow every origin in `FRONTEND_ORIGINS` (comma-separated: Vercel URL + `http://localhost:3000`).
 
@@ -26,7 +26,7 @@ CORS: allow every origin in `FRONTEND_ORIGINS` (comma-separated: Vercel URL + `h
 | Method | Path | Notes |
 |---|---|---|
 | GET | `/webhooks/whatsapp` | Plan B (Meta direct) only. Verification: if `hub.mode == "subscribe"` and `hub.verify_token == META_VERIFY_TOKEN`, return `hub.challenge` as plain text, else 403. Whether Kapso needs a verification handshake is part of the first-hour test |
-| POST | `/webhooks/whatsapp` | Bodies over 256 KiB get `413` (checked from `Content-Length`, and while reading when it is missing), before the signature check. Then verify signature → dedupe → enqueue handling as a background task → return `200` immediately; a failure inside the background handler is logged with the message id and kind, and is not retried by Kapso (durable retry belongs to the job runner, T16). Only `X-Webhook-Event: whatsapp.message.received` is handled; other events (and payloads that don't parse) get `200` and are ignored, so Kapso doesn't retry. Dedupe key: `message.id` (the `wamid`), or `X-Idempotency-Key` when the id is missing. Payload shapes in [integrations.md](integrations.md#whatsapp) |
+| POST | `/webhooks/whatsapp` | Bodies over 256 KiB get `413` (checked from `Content-Length`, and while reading when it is missing), before the signature check. Then verify signature → drop a message whose `timestamp` is more than 1 hour old (`200 {"status": "stale"}`: the HMAC covers the body only, so a captured body stays valid forever) → dedupe → enqueue handling as a background task, behind a per-sender limit (a token bucket, burst 30, 10 a minute; an album announcement costs no turn and doesn't end a throttled stretch, but has a small bucket of its own, burst 5 and 2 a minute, over which it is dropped silently). A turn over the limit never reaches the chat handler or the LLM: the Owner gets one short "Me llegaron muchos mensajes juntos" reply per throttled stretch → return `200` immediately; a failure inside the background handler is logged with the message id and kind, and is not retried by Kapso (durable retry belongs to the job runner, T16). Only `X-Webhook-Event: whatsapp.message.received` is handled; other events (and payloads that don't parse) get `200` and are ignored, so Kapso doesn't retry. Dedupe key: `message.id` (the `wamid`), or `X-Idempotency-Key` when the id is missing. With the database the key is a row in `inbound_deliveries` (kept 48 h, pruned by a background task so the request does no DELETE), so it survives a restart; without it, a 10k-entry in-memory LRU. A message with no `timestamp` is processed, dedupe still applies. Payload shapes in [integrations.md](integrations.md#whatsapp) |
 
 ### Zernio webhook
 
@@ -60,7 +60,9 @@ The Instagram callback is not under `/api/o/{token}`: Meta redirects the browser
 
 The wizard's `assets` list the Owner's uploads (`source = 'web'`) and the photos imported from Instagram (`source = 'instagram'`, photos only). Imported photos show in the wizard's photo step, where the Owner can drop any of them (`DELETE …/assets/{id}`), and count toward the minimum of 3; the cap of 15 applies to web uploads only. `instagram` in `OnboardingState` is the Business's latest `social_accounts` row for Instagram (`not_connected` when there is none).
 
-Link errors: an unknown token is `404 link_not_found`, an expired one `410 link_expired`, and every write after `/complete` succeeded is `409 onboarding_completed`, through any onboarding link of the Business, including ones never used (`GET` still works and shows `completed: true`). A body that doesn't validate is `422 invalid_request`; a Supabase Storage failure is `502 storage_unavailable`.
+Rate limit: every `/api/o/{token}/...` route (the Instagram `connect` and `start` hop included) allows a burst of 120 calls per token and refills 120 a minute, keyed on the token's hash and counted before the token is looked up; past it the route answers `429 rate_limited` (no `Retry-After`). The wizard's worst minute (a poll every 3 s while photos are analyzed, two calls per photo) is about 55 calls. The limits are in-process, per the single instance ([ADR 0005](../decisions/0005-single-instance-in-process-jobs.md)), and bounded: past 10,000 tracked keys the least recently used bucket is forgotten.
+
+Link errors: an unknown token is `404 link_not_found`, an expired one `410 link_expired`, and every write after `/complete` succeeded is `409 onboarding_completed`, through any onboarding link of the Business, including ones never used (`GET` still works and shows `completed: true`). A body that doesn't validate is `422 invalid_request` with `details` (a list of `{type, loc, msg}`, never the submitted value; the request lists have a hard ceiling of 20 items, above the 5-product and 5-photo caps the route answers with their own codes); a Supabase Storage failure is `502 storage_unavailable`.
 
 ```ts
 type OnboardingState = {
@@ -118,7 +120,7 @@ The wizard (`/api/o/{token}`, Must, photos and logo only) and the dashboard (`/a
 | Method | Path | Body | Response |
 |---|---|---|---|
 | POST | `/api/{o\|b}/{token}/uploads` | `UploadRequest` | `UploadTicket`. Validates type and size, creates a `brand_assets` row with `status = 'uploading'`, returns a signed upload URL for `assets/{business_id}/{asset_id}.{ext}` |
-| POST | `/api/{o\|b}/{token}/assets/{asset_id}/complete` | — | `Asset`. Only assets uploaded through `/uploads` (the web form) can be completed; any other asset (imported from Instagram, kept from a WhatsApp chat) is `404 asset_not_found`, like an unknown or archived one. Checks the object exists in Storage (else `409 upload_missing`), sets `status = 'ready'` and `size_bytes`, converts HEIC to JPEG (`pillow-heif`), writes the copy the agents read (`{asset_id}-llm.jpg`, ≤ 1536 px), runs logo palette extraction synchronously, enqueues `analyze_asset` for photos and videos. A file that isn't an image, or is over the limit once uploaded, is `422 unsupported_file` and the asset `failed`; the object is read as a stream and dropped as soon as it passes the limit, so it is never held whole in memory. An image over 25 megapixels is `422 image_too_large` (also `failed`). A `failed` asset answers `422 unsupported_file` again without being read, so the Owner uploads a new file |
+| POST | `/api/{o\|b}/{token}/assets/{asset_id}/complete` | — | `Asset`. Only assets uploaded through `/uploads` (the web form) can be completed; any other asset (imported from Instagram, kept from a WhatsApp chat) is `404 asset_not_found`, like an unknown or archived one. Checks the object exists in Storage (else `409 upload_missing`), sets `status = 'ready'` and `size_bytes`, converts HEIC to JPEG (`pillow-heif`), writes the copy the agents read (`{asset_id}-llm.jpg`, ≤ 1536 px), runs logo palette extraction synchronously, enqueues `analyze_asset` for photos and videos. A file that isn't an image, or is over the limit once uploaded, is `422 unsupported_file` and the asset `failed`; the object is read as a stream and dropped as soon as it passes the limit, so it is never held whole in memory. An image over 25 megapixels is `422 image_too_large` (also `failed`). A retry on an asset that already `failed` answers `422 upload_failed` ("No pudimos usar ese archivo. Subí uno nuevo.") without reading it again, whatever made it fail, so the Owner uploads a new file |
 
 1. `POST .../uploads` → `UploadTicket`.
 2. The browser uploads to `upload_url`: a single `PUT` when `resumable = false`, or TUS with `x-signature: upload_token` when `resumable = true`. Photos and logos (≤ 10 MB) are always `resumable = false`; TUS is only for videos (Could).
@@ -258,7 +260,9 @@ class InboundMessage(BaseModel):       # app/channels/base.py; one per webhook d
 
 # app/channels/inbound.py: the seams T02 and T23 replace
 class DedupeStore(Protocol):
-    async def first_seen(self, key: str) -> bool: ...      # atomic; True the first time
+    # atomic; True the first time. DbDedupeStore (INSERT ... ON CONFLICT DO NOTHING on
+    # inbound_deliveries) with DATABASE_URL, InMemoryDedupeStore without it
+    async def first_seen(self, key: str) -> bool: ...
 
 class InboundHandler(Protocol):
     async def handle(self, message: InboundMessage, channel: ChannelPort) -> None: ...

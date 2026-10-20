@@ -139,6 +139,12 @@ class PhotoUnreadable:
 
 
 @dataclass(frozen=True, slots=True)
+class PhotoTooLarge:
+    def note(self) -> str:
+        return "[photo too large] It has more megapixels than we can read."
+
+
+@dataclass(frozen=True, slots=True)
 class PhotoTooBig:
     max_mb: int
 
@@ -258,6 +264,7 @@ Event = (
     | UnsupportedMedia
     | PhotoUnreadable
     | PhotoTooBig
+    | PhotoTooLarge
     | StaleButton
     | BrandConfirmed
     | BrandFixAsked
@@ -344,6 +351,8 @@ def fallback(event: Event) -> str | None:
             return messages_es.PHOTO_UNREADABLE
         case PhotoTooBig(max_mb=max_mb):
             return messages_es.photo_too_big(max_mb)
+        case PhotoTooLarge():
+            return messages_es.PHOTO_TOO_LARGE
         case StaleButton():
             return messages_es.STALE_BUTTON
         case BrandConfirmed():
