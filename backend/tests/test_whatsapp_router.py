@@ -13,10 +13,13 @@ from app.channels.router import (
     MAX_BODY_BYTES,
     get_channel,
     get_clock,
+    get_conversation,
     get_dedupe_store,
     get_inbound_handler,
 )
 from app.config import Settings, get_settings
+from app.conversation.events import Event
+from app.conversation.factory import Conversation
 from app.copy import messages_es
 from app.main import app
 from app.ratelimit import TURNS_BURST
@@ -193,7 +196,7 @@ def test_health_boots_without_any_kapso_config() -> None:
 
 
 def test_the_app_does_not_boot_without_a_gemini_key() -> None:
-    get_inbound_handler.cache_clear()
+    get_conversation.cache_clear()
 
     with pytest.raises(ValueError, match="GEMINI_API_KEY"), TestClient(app):
         pass
@@ -275,13 +278,21 @@ def test_webhook_turns_are_rate_limited_per_sender(monkeypatch: pytest.MonkeyPat
     """Guard for #106: goes red if the webhook's handler is ever not the rate-limited one.
 
     Only what sits behind the wrap is replaced (the factory's handler, the channel, the dedupe
-    store); `get_inbound_handler` itself is the real one. If a refactor moves the handler's
-    construction, re-apply the wrap there and point this test at the new factory.
+    store); `get_conversation` (which wraps `build_conversation`'s handler) is the real one. If a
+    refactor moves the handler's construction, re-apply the wrap there and point this test at the
+    new factory.
     """
     inner = RecordingHandler()
     channel = FakeChannel()
-    monkeypatch.setattr("app.channels.router.build_inbound_handler", lambda *args: inner)
-    get_inbound_handler.cache_clear()
+
+    async def notify(sender: str, event: Event, channel: ChannelPort) -> None:
+        pass
+
+    monkeypatch.setattr(
+        "app.channels.router.build_conversation",
+        lambda *args: Conversation(handler=inner, notify=notify),
+    )
+    get_conversation.cache_clear()
     store = InMemoryDedupeStore()
     app.dependency_overrides[get_settings] = lambda: Settings(kapso_webhook_secret=SECRET)
     app.dependency_overrides[get_dedupe_store] = lambda: store
@@ -297,7 +308,7 @@ def test_webhook_turns_are_rate_limited_per_sender(monkeypatch: pytest.MonkeyPat
                 assert response.json() == {"status": "ok"}
     finally:
         app.dependency_overrides.clear()
-        get_inbound_handler.cache_clear()
+        get_conversation.cache_clear()
 
     assert len(inner.handled) == TURNS_BURST
     assert [m.message_id for m in inner.handled] == [f"wamid.{n}" for n in range(TURNS_BURST)]

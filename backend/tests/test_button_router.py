@@ -1,5 +1,6 @@
 import pytest
 
+from app.background import BackgroundWork
 from app.conversation.button_router import ButtonRouter
 from app.conversation.events import (
     PostApproved,
@@ -9,14 +10,15 @@ from app.conversation.events import (
     PostStarted,
     PublishStarted,
     StaleButton,
-    buttons,
 )
+from app.conversation.outbound import buttons
 from app.conversation.photos import InMemoryPhotos
 from app.media.public import PublicImages
 from app.posts.drafts import PostCopy, PostDrafter
+from app.posts.lifecycle import PostLifecycle
 from app.posts.maker import PostMaker
 from app.posts.publish import PostPublisher
-from app.posts.store import InMemoryPosts, Post, PostImage, PostStatus
+from app.posts.store import Post, PostImage, PostStatus
 from app.publishing.base import PublishResult
 from app.rendering.mock import MockRenderer
 from tests.conftest import make_image
@@ -40,8 +42,9 @@ class RecordingPublisher:
 class Rig:
     def __init__(self) -> None:
         self.model = ScriptedModel(drafts={PostCopy: PostCopy(caption="Mesa", hashtags=[])})
-        self.photos, self.store = InMemoryPhotos(), InMemoryPosts()
+        self.photos, self.store = InMemoryPhotos(), PostLifecycle()
         images = PublicImages()
+        self.background = BackgroundWork()
         self.maker = PostMaker(
             PostDrafter(self.model),
             CountingImageGen(),
@@ -51,20 +54,25 @@ class Rig:
             self.store,
             "https://backend.test",
             max_posts_per_day=5,
+            background=self.background,
         )
         self.publisher = RecordingPublisher()
         self.publishing = PostPublisher(
-            self.publisher, self.store, images, "https://backend.test", ACCOUNT
+            self.publisher,
+            self.store,
+            images,
+            "https://backend.test",
+            ACCOUNT,
+            background=self.background,
         )
         self.events: list[object] = []
-
-        async def notify(sender: str, event: object, channel: object) -> None:
-            self.events.append(event)
-
-        self.maker.on_event(notify)
-        self.publishing.on_event(notify)
         self.channel = FakeChannel()
-        self.router = ButtonRouter(self.store, self.maker, self.publishing, sessions=None)
+        self.router = ButtonRouter(
+            self.store, self.maker, self.publishing, sessions=None, brand=None
+        )
+
+    async def notify(self, sender: str, event: object, channel: object) -> None:
+        self.events.append(event)
 
     def add_post(self, post_id: str, status: PostStatus = "pending_approval") -> Post:
         photo = self.photos.add(SENDER, make_image((100, 100)), None)
@@ -81,11 +89,10 @@ class Rig:
         return post
 
     async def tap(self, button_id: str) -> object:
-        return await self.router.handle(SENDER, button_id, self.channel)
+        return await self.router.handle(SENDER, button_id, self.channel, self.notify)
 
     async def finish(self) -> None:
-        await self.maker.join()
-        await self.publishing.join()
+        await self.background.join()
 
 
 @pytest.fixture

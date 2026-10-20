@@ -11,6 +11,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.background import BackgroundWork
 from app.db.models import InboundDelivery
 from app.ratelimit import ALBUM_BURST, ALBUM_PER_MINUTE, MAX_TRACKED_KEYS, RateLimiter
 
@@ -56,6 +57,14 @@ class InMemoryDedupeStore:
             return True
 
 
+async def mark_read(message_id: str, channel: ChannelPort) -> None:
+    """Show the Owner their message was read, with the typing indicator; a failure only logs."""
+    try:
+        await channel.mark_read(message_id, typing=True)
+    except ChannelError:
+        logger.warning("mark_read failed for %s", message_id, exc_info=True)
+
+
 class DbDedupeStore:
     """`INSERT ... ON CONFLICT DO NOTHING` on `inbound_deliveries`: survives a restart (#105).
 
@@ -68,16 +77,18 @@ class DbDedupeStore:
     def __init__(
         self,
         sessions: async_sessionmaker[AsyncSession],
+        background: BackgroundWork,
         retention: timedelta = DEDUPE_RETENTION,
         prune_every_s: float = DEDUPE_PRUNE_EVERY_S,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self._sessions = sessions
+        self._background = background
         self._retention = retention
         self._prune_every_s = prune_every_s
         self._clock = clock
         self._next_prune_at = float("-inf")
-        # Held so the task isn't garbage-collected mid-flight, and to keep it to one at a time.
+        # The running prune, to keep it to one at a time.
         self._prune_task: asyncio.Task[None] | None = None
 
     async def first_seen(self, key: str) -> bool:
@@ -97,7 +108,7 @@ class DbDedupeStore:
             return
         if self._clock() < self._next_prune_at:
             return
-        self._prune_task = asyncio.create_task(self._prune())
+        self._prune_task = self._background.start(self._prune(), "inbound dedupe prune")
 
     async def _prune(self) -> None:
         delay = self._prune_every_s
@@ -174,10 +185,7 @@ class EchoHandler:
         logger.info(
             "inbound %s id=%s from=%s", message.kind, message.message_id, mask(message.sender)
         )
-        try:
-            await channel.mark_read(message.message_id, typing=True)
-        except ChannelError:
-            logger.warning("mark_read failed for %s", message.message_id, exc_info=True)
+        await mark_read(message.message_id, channel)
         await channel.send_text(message.sender, describe(message))
 
 

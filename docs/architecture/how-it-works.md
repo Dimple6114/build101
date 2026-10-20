@@ -42,7 +42,7 @@ Each outside service sits behind a small interface (a Python `Protocol`, called 
 | `ImageGenPort` | `imagegen/gemini.py` | `imagegen/mock.py` | `IMAGE_GEN` |
 | `PublisherPort` (Instagram) | `publishing/zernio.py` | `publishing/mock.py` | `PUBLISHER` |
 
-Everything is wired together in [`backend/app/conversation/factory.py`](../../backend/app/conversation/factory.py) (`build_inbound_handler`). It is the best first file to read.
+Everything is wired together in [`backend/app/conversation/factory.py`](../../backend/app/conversation/factory.py) (`build_conversation` reads `Settings`; `build_chat` is the one place the chat graph is wired, in production and in tests; it returns the inbound `handler` and the `notify` that jobs share). It is the best first file to read. The webhook's `get_conversation()` in `channels/router.py` puts the `handler` behind a `RateLimitedHandler` (a token bucket per sender, [#106](https://github.com/guidodinello/build101/issues/106)); `notify` is not limited, since code raises those events, not the Owner.
 
 ## WhatsApp and the backend, through Kapso
 
@@ -72,7 +72,9 @@ Every inbound message passes through two handlers in a row: `OnboardingGate`, wh
 - `awaiting_web_form`: resends a fresh link, at most once every 30 s.
 - Any later state: hands the message to `ChatHandler`.
 
-**`ChatHandler`** (`conversation/chat.py`) treats each kind of message differently:
+The states and the moves between them live in one module, `onboarding/state.py`: an enum plus a transition function per move (`welcome`, `name_received`, `form_submitted`, `confirm_brand`, ...). The gate, the web API, the `generate_brand` job and the brand buttons ask it to move the Business and never write `onboarding_state` themselves.
+
+**`ChatHandler`** (`conversation/chat.py`) routes each kind of message and holds the Owner's lock; the work is in three modules it calls: `PhotoBatches` (`photo_batches.py`, the photo debounce), `Turns` (`turns.py`, one orchestrator turn) and `Toolbox` (`toolbox.py`, the tools). It treats each kind of message differently:
 
 - **Photos** are downloaded, resized, and held in a 5-second batch, because WhatsApp sends an album as one message per photo. The batch is answered when the timer fires, or together with a text that arrives meanwhile.
 - **Text and voice notes** start an LLM turn. A voice note is handled as its Kapso transcript.
@@ -96,31 +98,35 @@ Timeouts are 60 s for chat and 90 s for structured calls. Server errors are retr
 
 | Agent | Where | Call | What it does |
 |---|---|---|---|
-| orchestrator | `conversation/chat.py` | `reply` with tools | Talks with the Owner; decides when to call `create_post` or `approve_post` |
+| orchestrator | `conversation/turns.py` | `reply` with tools | Talks with the Owner; decides when to call `create_post` or `approve_post` |
 | post_drafter | `posts/drafts.py` | `structured` | Brief, photos and Brand Brain become caption, hashtags and, for a design, each slide's headline and scene prompt |
-| asset_analyst | `agents/asset_analyst.py` | `structured` | Analyzes each photo uploaded in the wizard (background job) |
+| asset_analyst | `agents/asset_analyst.py` | `structured` | Analyzes each photo uploaded in the wizard (background job) and each photo the Owner sends in the chat (`PhotoKeeper`), both through `assets/analysis.py` |
 | brand_strategist | `agents/brand_strategist.py` | `structured`, high thinking | Writes the Brand Brain: voice, audience, pillars, visual identity (background job) |
 | niche_analyst | `agents/niche_analyst.py` | `grounded` (URL context and Google Search) | Writes the weekly Niche Report of a niche: what its stores and articles show this week, each point with a checked source (background job) |
 | image generation | `imagegen/gemini.py`, `carousel/generator.py` | `generate_content` | Makes 4:5 slide images from scene prompts and the product photos |
 
-**The orchestrator's tool loop** (`chat.py`, `_converse`): for up to 5 steps, send the system prompt, the history and the current message with the two tools. If Gemini answers with text, that text goes to WhatsApp. If it asks for a tool, code runs it, appends the result, and loops. Tools are declared in `conversation/tools.py`, and both return at once (`{"post_id": ..., "status": "generating"}`); the slow work runs in the background.
+**The orchestrator's tool loop** (`turns.py`, `_converse`; Owner turns and event turns share one pipeline, `_run`): for up to 5 steps, send the system prompt, the history and the current message with the two tools. If Gemini answers with text, that text goes to WhatsApp. If it asks for a tool, code runs it, appends the result, and loops. Tools are declared in `conversation/tools.py` and run by `Toolbox` (`toolbox.py`), and both return at once (`{"post_id": ..., "status": "generating"}`); the slow work runs in the background, on `BackgroundWork` (`app/background.py`).
 
-**Code reports events, the model writes the message** ([ADR 0026](../decisions/0026-owner-messages-from-the-orchestrator.md)). When background work ends, code emits a typed event from `conversation/events.py`, such as `PostSent` or `Published`. `ChatHandler.notify` gives that event's note to the orchestrator as if the Owner had sent it, and the model writes the reply. Buttons are attached in code. If the model fails, a fixed Spanish fallback from `copy/messages_es.py` goes out instead.
+**Code reports events, the model writes the message** ([ADR 0026](../decisions/0026-owner-messages-from-the-orchestrator.md)). When background work ends, code emits a typed event from `conversation/events.py`, such as `PostSent` or `Published`; the makers receive `notify` with each call, so none can be built without a way to tell the Owner. `Turns.notify` gives that event's note to the orchestrator as if the Owner had sent it, and the model writes the reply. Buttons are attached in code. If the model fails, a fixed Spanish fallback from `copy/messages_es.py` goes out instead. Every event reaches WhatsApp through `conversation/outbound.py`, which owns the buttons, the 1024-character body limit and the text/buttons split. Jobs and the onboarding API use the same `notify`; their three events (`BrandSummaryReady`, `JobFailed`, `BrandGenerating`) are verbatim: fixed text, no model turn.
 
-**The model cannot approve a publish on its own.** `approve_post` publishes only the post that `conversation/approval.py` allows, and that check runs in code on the Owner's own words. "subilo" approves; "me encanta", questions and negations do not. Whatever post id the model passes, nothing else goes out ([ADR 0007](../decisions/0007-approve-every-post.md)).
+**What the Agency knows about a Business.** `knowledge/` has one interface, `Knowledge.of(sender)`, that answers with the Business's facts, latest Brand Brain, Catalog, Owner notes, conversation summary and the trend notes of its niche, all read fresh. `DbKnowledge` resolves the Owner's phone to the Business once (`business_of`) and reads everything in one session; if the database fails it logs one warning and answers with nothing known, so a turn or a post goes ahead without it. `LocalKnowledge` serves runs without a database from the in-memory notes and history, and gives every sender the Niche Report saved at `NICHE_REPORT_PATH`. `build_conversation` builds one and gives it to both the orchestrator (which renders it into the system prompt, `conversation/context.py`) and `PostMaker`.
+
+**One module owns a Post's state.** `posts/lifecycle.py` (`PostLifecycle`) is the only code that assigns `Post.status`: pending → approved → publishing → published, failed or publish_pending, plus discarded and replaced. The button router, the makers, the publisher and the chat ask it ("approve this tap", "retire this post", "may this publish?") and never compare or write status strings. It also holds the Approval inputs per Owner: the numbered list `subilo` showed (`listed`), the post the last reply asked to publish (`offered`) and whether photos came after the pending posts (`has_photos`). Posts live in memory behind it ([ADR 0005](../decisions/0005-single-instance-in-process-jobs.md)); moving them to the database changes its store, not its callers. A test (`tests/test_post_status_writes.py`) fails if another module under `posts/` or `conversation/` assigns a Post's status.
+
+**The model cannot approve a publish on its own.** `approve_post` publishes only the post that `conversation/approval.py` allows, and that check runs in code on the Owner's own words. The publisher accepts only an `ApprovedPost`, which `PostLifecycle` hands out after that check (text) or after the [Aprobar] tap, and after a failure for [Reintentar]. "subilo" approves; "me encanta", questions and negations do not. Whatever post id the model passes, nothing else goes out ([ADR 0007](../decisions/0007-approve-every-post.md)).
 
 ## Making a post
 
-A post is made in the background after the orchestrator calls `create_post` with a brief, the photo ids, a style (`photos` or `design`), and optionally `with_logo` or `replaces`. The code is `posts/maker.py`.
+A post is made in the background after the orchestrator calls `create_post` with a brief, the photo ids, a style (`photos` or `design`), and optionally `with_logo` or `replaces`. The code is `posts/maker.py`; it starts the generation on `BackgroundWork` (`app/background.py`), like every other background task.
 
 1. **Guards, in code.** The photos must exist, no other post for this Owner may be generating, the daily design limit (`MAX_POSTS_PER_DAY`, default 5) must not be reached, and a logo must exist if one was asked for.
-2. **Brand Brain, notes and trend notes.** The latest Brand Brain version, the Owner's notes and the latest Niche Report of the Business's niche (its insights are the drafter's trend notes) are loaded from Postgres. If the database fails, the post goes ahead without them.
+2. **What the Agency knows.** One read of `Knowledge` (`knowledge/`, below) gives the latest Brand Brain version, the Owner's notes and the latest Niche Report of the Business's niche (its insights are the drafter's trend notes). If the database fails, the post goes ahead without them.
 3. **Copy and images.**
     - `photos` style: the drafter writes the caption, and the Owner's photos are cropped to 4:5.
     - `design` style: the drafter writes the copy and a carousel brief. `CarouselGenerator` makes the cover first, then the other slides in parallel, each using the cover as its style reference.
 4. **Logo.** It is stamped in code (`media/images.add_logo`), never drawn by the AI ([ADR 0027](../decisions/0027-owner-logo-stamped-in-code.md)).
 5. **Send.** The JPEGs go into `PublicImages` and out to WhatsApp as numbered images, with the caption on the first.
-6. **Keep.** The post is saved in `InMemoryPosts` as `pending_approval`. If it replaces an older post, that one becomes `replaced` and can no longer be published.
+6. **Keep.** The post is saved through `PostLifecycle` (in memory) as `pending_approval`. If it replaces an older post, that one becomes `replaced` and can no longer be published.
 7. **Announce.** A `PostSent` event lets the orchestrator write the message, with Aprobar, Cambiar and Descartar buttons under it. If anything failed, a `PostFailed` event goes out instead.
 
 ## Publishing to Instagram, through Zernio
@@ -132,7 +138,7 @@ A publish starts in one of two ways:
 - The Owner writes "subilo". The orchestrator calls `approve_post`, and code checks the approval described above.
 - The Owner taps Aprobar, then Publicar ahora. The tap itself is the approval.
 
-Then `PostPublisher` (`posts/publish.py`) runs a background task:
+Then `PostPublisher` (`posts/publish.py`) runs a background task on `BackgroundWork`:
 
 1. It builds the image URLs from `PUBLIC_BACKEND_URL`. Zernio and Instagram download the images from our backend.
 2. `ZernioPublisher` (`publishing/zernio.py`) sends `POST /posts` with the caption, the images, the Instagram account and `publishNow: true`, plus an `Idempotency-Key` header. A retry with the same key can never post twice.
@@ -162,7 +168,7 @@ Onboarding starts in WhatsApp, moves to a web wizard for the details, and ends b
 | `generate_brand` | Waits up to 60 s for the photo analyses, then runs the brand strategist | A new `brand_brains` version, and a WhatsApp summary with Sí and Corregir algo buttons |
 | `generate_niche_report` | Runs the niche analyst for one niche (`payload.niche_id`, no Business) | This week's `niche_reports` row for that niche, replaced if a retry already wrote it. Nothing is sent to the Owner |
 
-**The weekly Niche Report** (`jobs/niche.py`, [ADR 0025](../decisions/0025-weekly-niche-report.md)) has no cron. The runner's poller runs a check when it starts and then every 15 minutes: for each niche with at least one `active` Business and no report for the current week (Monday, in the niche's timezone), it queues `generate_niche_report`, unless a job for that niche is already queued, running or done this week, or two have already failed this week (each attempt runs billed Google searches). So a deploy produces the week's report at once, and a missed Monday is caught up. Every Business maps to the MVP's niche, `curated-wood-furniture-uy`, for now. The orchestrator's context and the post drafter read the latest report of the Business's niche on every turn and every post, as `<trend_notes>`.
+**The weekly Niche Report** (`jobs/niche.py`, [ADR 0025](../decisions/0025-weekly-niche-report.md)) has no cron. The runner's poller runs a check when it starts and then every 15 minutes: for each niche with at least one `active` Business and no report for the current week (Monday, in the niche's timezone), it queues `generate_niche_report`, unless a job for that niche is already queued, running or done this week, or two have already failed this week (each attempt runs billed Google searches). So a deploy produces the week's report at once, and a missed Monday is caught up. Every Business maps to the MVP's niche, `curated-wood-furniture-uy`, for now. The orchestrator's context and the post drafter read the latest report of the Business's niche on every turn and every post, as `<trend_notes>`, through `Knowledge`.
 
 If the Owner taps Corregir algo, their next message is the correction, and `generate_brand` runs again in revise mode. Confirming the summary finishes onboarding. Once the form is submitted, every WhatsApp message already goes to the orchestrator.
 
@@ -174,14 +180,14 @@ Only onboarding data is stored for good; the conversation and the posts live in 
 |---|---|
 | Businesses, onboarding state, magic links | Conversation history (`InMemoryHistory`) |
 | Products and brand assets (wizard photos, logo) | Photos sent on WhatsApp (`InMemoryPhotos`) |
-| Brand Brain versions, Niche Reports | Posts and their status (`InMemoryPosts`) |
+| Brand Brain versions, Niche Reports | Posts and their status (`PostLifecycle`, over `InMemoryPosts`) |
 | Jobs | Generated JPEGs (`PublicImages`, newest 200) |
 | | Webhook dedupe store, only without `DATABASE_URL` (with it, `inbound_deliveries`) |
 
-A redeploy while a post is waiting means it can no longer be approved or published, and its image links return 404. The code comments point to tasks T17 and T19 to move this into the database and Storage.
+A redeploy while a post is waiting means it can no longer be approved or published, and its image links return 404. The code comments point to tasks T17 and T19 to move this into the database and Storage. The guards that stop a second generation (`generation_in_progress`, the daily limits) are in memory for the same reason.
 
 ## Where to read next
 
 - Wiring: [`backend/app/conversation/factory.py`](../../backend/app/conversation/factory.py)
-- The conversation: [`backend/app/conversation/chat.py`](../../backend/app/conversation/chat.py) and its system prompt, `backend/app/conversation/prompts/orchestrator.md`
+- The conversation: [`backend/app/conversation/chat.py`](../../backend/app/conversation/chat.py) (routing), [`turns.py`](../../backend/app/conversation/turns.py) (the turn pipeline) and its system prompt, `backend/app/conversation/prompts/orchestrator.md`
 - Intended design: [overview.md](overview.md), [integrations.md](integrations.md) (Kapso, Gemini, Zernio) and [agents.md](agents.md)

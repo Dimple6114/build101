@@ -3,7 +3,7 @@ from typing import Any
 
 import pytest
 
-from app.conversation.chat import ChatHandler
+from app.conversation.toolbox import Toolbox
 from tests.fakes import FakeChannel, ScriptedModel, call_reply, text_reply
 from tests.test_chat_handler import build, message
 
@@ -14,12 +14,12 @@ SENTINELS = (ARGUMENT, RESULT, REPLY)
 
 
 async def run_turn(monkeypatch: pytest.MonkeyPatch) -> None:
-    async def tool_result(self: ChatHandler, *args: Any, **kwargs: Any) -> dict[str, Any]:
+    async def dispatch(self: Toolbox, *args: Any, **kwargs: Any) -> dict[str, Any]:
         return {"saved": RESULT}
 
-    monkeypatch.setattr(ChatHandler, "_tool_result", tool_result)
+    monkeypatch.setattr(Toolbox, "_dispatch", dispatch)
     model = ScriptedModel(replies=[call_reply("remember", note=ARGUMENT), text_reply(REPLY)])
-    await build(model)[0].handle(message("text"), FakeChannel())
+    await build(model)[0].handler.handle(message("text"), FakeChannel())
 
 
 async def test_info_logs_of_a_turn_have_no_owner_content(
@@ -37,7 +37,7 @@ async def test_info_logs_of_a_turn_have_no_owner_content(
 async def test_debug_logs_still_show_the_content(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
-    caplog.set_level(logging.DEBUG, logger="app.conversation.chat")
+    caplog.set_level(logging.DEBUG, logger="app.conversation")
 
     await run_turn(monkeypatch)
 

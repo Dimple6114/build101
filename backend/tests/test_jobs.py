@@ -4,13 +4,25 @@ from typing import Any
 
 import pytest
 from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.agents.schemas import AssetAnalysis
+from app.background import BackgroundWork
+from app.channels.base import Button, ChannelError
 from app.conversation.brand import BrandFlow
 from app.conversation.button_router import ButtonRouter
-from app.conversation.events import BrandConfirmed, BrandFixAsked, JobRetried, StaleButton
+from app.conversation.events import (
+    BrandConfirmed,
+    BrandFixAsked,
+    BrandSummaryReady,
+    JobFailed,
+    JobRetried,
+    StaleButton,
+)
+from app.conversation.factory import ChatParts, build_chat
 from app.conversation.history import DbHistory
+from app.conversation.outbound import FixedReplies
 from app.copy import messages_es
 from app.db.models import (
     AssetProduct,
@@ -20,14 +32,18 @@ from app.db.models import (
     Job,
     Product,
 )
+from app.imagegen.mock import MockImageGen
 from app.jobs.asset import analyze_asset
-from app.jobs.brand import BRAND_SUMMARY_NOTE, generate_brand
+from app.jobs.brand import generate_brand
 from app.jobs.queue import enqueue, retry_failed
 from app.jobs.runner import JobContext, JobRunner
-from app.llm.client import user_step
-from app.posts.store import InMemoryPosts
+from app.llm.client import Step, user_step
+from app.media.public import PublicImages
+from app.posts.lifecycle import PostLifecycle
+from app.publishing.mock import MOCK_ACCOUNT_ID, MockPublisher
+from app.rendering.mock import MockRenderer
 from tests.conftest import make_image, requires_db
-from tests.fakes import FakeChannel, FakeStorage, SequenceModel, brand_brain
+from tests.fakes import EventLog, FakeChannel, FakeStorage, SequenceModel, brand_brain
 
 pytestmark = requires_db
 
@@ -76,17 +92,21 @@ def runner(
     channel: FakeChannel,
     model: Any = None,
     storage: FakeStorage | None = None,
+    notify: Any = None,
     **options: Any,
-) -> JobRunner:
+) -> tuple[JobRunner, BackgroundWork]:
+    background = BackgroundWork()
     return JobRunner(
         sessions,
         jobs,
         storage or FakeStorage(),
         channel,
         model or SequenceModel([]),
+        notify or FixedReplies(DbHistory(sessions)),
         notify_on_failure=frozenset({"generate_brand"}),
+        background=background,
         **options,
-    )
+    ), background
 
 
 async def queue(
@@ -114,10 +134,10 @@ async def test_a_queued_job_runs_and_records_its_result(
         return {"done": True}
 
     job_id = await queue(sessions, "analyze_asset", business, n=1)
-    jobs = runner(sessions, {"analyze_asset": ok}, FakeChannel())
+    jobs, background = runner(sessions, {"analyze_asset": ok}, FakeChannel())
 
     assert await jobs.run_due() == 1
-    await jobs.join()
+    await background.join()
 
     job = await job_row(sessions, job_id)
     assert (job.status, job.result, job.error) == ("succeeded", {"done": True}, None)
@@ -135,15 +155,33 @@ async def test_a_failed_job_tells_the_owner_with_a_retry_button(
 
     job_id = await queue(sessions, "generate_brand", business)
     channel = FakeChannel()
-    jobs = runner(sessions, {"generate_brand": boom}, channel)
+    jobs, background = runner(sessions, {"generate_brand": boom}, channel)
 
     await jobs.run_due()
-    await jobs.join()
+    await background.join()
 
     job = await job_row(sessions, job_id)
     assert job.status == "failed"
     assert "kaput" in (job.error or "")
     assert channel.buttons == [(PHONE, messages_es.JOB_FAILED, [f"retry:{job_id}"])]
+
+
+async def test_a_failed_job_raises_job_failed_for_its_owner(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    business = await add_business(sessions)
+
+    async def boom(context: JobContext, payload: dict[str, Any]) -> None:
+        raise RuntimeError("kaput")
+
+    job_id = await queue(sessions, "generate_brand", business)
+    events = EventLog()
+    jobs, background = runner(sessions, {"generate_brand": boom}, FakeChannel(), notify=events)
+
+    await jobs.run_due()
+    await background.join()
+
+    assert events.events == [(PHONE, JobFailed(job_id, "generate_brand"))]
 
 
 async def test_other_failures_are_only_logged(sessions: async_sessionmaker[AsyncSession]) -> None:
@@ -154,10 +192,10 @@ async def test_other_failures_are_only_logged(sessions: async_sessionmaker[Async
 
     job_id = await queue(sessions, "analyze_asset", business)
     channel = FakeChannel()
-    jobs = runner(sessions, {"analyze_asset": boom}, channel)
+    jobs, background = runner(sessions, {"analyze_asset": boom}, channel)
 
     await jobs.run_due()
-    await jobs.join()
+    await background.join()
 
     assert (await job_row(sessions, job_id)).status == "failed"
     assert channel.buttons == []
@@ -169,7 +207,7 @@ async def test_a_kind_this_process_cant_run_stays_queued(
     # The old instance during a deploy: it must not claim, and fail, a kind only the new one knows
     business = await add_business(sessions)
     job_id = await queue(sessions, "generate_niche_report", business)
-    jobs = runner(sessions, {"analyze_asset": analyze_asset}, FakeChannel())
+    jobs, background = runner(sessions, {"analyze_asset": analyze_asset}, FakeChannel())
 
     assert await jobs.run_due() == 0
     assert (await job_row(sessions, job_id)).status == "queued"
@@ -183,12 +221,12 @@ async def test_only_free_slots_are_claimed(sessions: async_sessionmaker[AsyncSes
 
     for _ in range(3):
         await queue(sessions, "analyze_asset", business)
-    jobs = runner(sessions, {"analyze_asset": ok}, FakeChannel(), max_concurrent=2)
+    jobs, background = runner(sessions, {"analyze_asset": ok}, FakeChannel(), max_concurrent=2)
 
     assert await jobs.run_due() == 2
-    await jobs.join()
+    await background.join()
     assert await jobs.run_due() == 1
-    await jobs.join()
+    await background.join()
 
 
 async def test_jobs_left_running_by_a_restart_are_failed(
@@ -211,7 +249,7 @@ async def test_jobs_left_running_by_a_restart_are_failed(
         db.add_all([stale, fresh])
         await db.commit()
 
-    assert await runner(sessions, {}, FakeChannel()).fail_stale() == 1
+    assert await runner(sessions, {}, FakeChannel())[0].fail_stale() == 1
     assert (await job_row(sessions, stale.id)).status == "failed"
     assert (await job_row(sessions, fresh.id)).status == "running"
 
@@ -269,6 +307,7 @@ def context(
     model: Any,
     storage: FakeStorage | None = None,
     channel: FakeChannel | None = None,
+    notify: Any = None,
 ) -> JobContext:
     return JobContext(
         uuid.uuid4(),
@@ -277,6 +316,7 @@ def context(
         storage or FakeStorage(),
         channel or FakeChannel(),
         model,
+        notify or EventLog(),
     )
 
 
@@ -337,13 +377,13 @@ async def test_analyze_asset_skips_a_photo_archived_after_the_job_started(
     assert result == {"skipped": "archived while queued"}
 
 
-async def test_generate_brand_saves_a_version_and_asks_the_owner(
+async def test_generate_brand_saves_a_version_and_raises_the_summary_event(
     sessions: async_sessionmaker[AsyncSession],
 ) -> None:
-    business, channel = await add_business(sessions), FakeChannel()
+    business, events = await add_business(sessions), EventLog()
     model = SequenceModel([brand_brain(whatsapp_summary="• *Cómo hablamos:* cálidos")])
 
-    result = await generate_brand(context(sessions, business, model, channel=channel), {})
+    result = await generate_brand(context(sessions, business, model, notify=events), {})
 
     assert result == {"version": 1}
     async with sessions() as db:
@@ -352,15 +392,108 @@ async def test_generate_brand_saves_a_version_and_asks_the_owner(
     assert saved.onboarding_state == "awaiting_brand_confirmation"
     assert version and (version.version, version.reason) == (1, "onboarding")
     assert version.data["constraints"][0] == "precios"
+    assert events.events == [(PHONE, BrandSummaryReady("Katei", "• *Cómo hablamos:* cálidos"))]
+
+
+async def test_the_summary_reaches_the_owner_and_the_history_through_fixed_replies(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    business, channel = await add_business(sessions), FakeChannel()
+    model = SequenceModel([brand_brain(whatsapp_summary="• *Cómo hablamos:* cálidos")])
+    history = DbHistory(sessions)
+
+    await generate_brand(
+        context(sessions, business, model, channel=channel, notify=FixedReplies(history)), {}
+    )
+
+    event = BrandSummaryReady("Katei", "• *Cómo hablamos:* cálidos")
     assert channel.buttons == [
-        (
-            PHONE,
-            messages_es.brand_summary("Katei", "• *Cómo hablamos:* cálidos"),
-            ["brand_ok", "brand_fix"],
-        )
+        (PHONE, messages_es.brand_summary("Katei", event.summary), ["brand_ok", "brand_fix"])
     ]
     # The orchestrator knows what the Owner was just shown (ADR 0030).
-    assert await DbHistory(sessions).get(PHONE) == [user_step(BRAND_SUMMARY_NOTE)]
+    assert await history.get(PHONE) == [user_step(event.note())]
+
+
+class FailsOnceChannel(FakeChannel):
+    """The first buttons message doesn't go out, like a WhatsApp outage that clears up."""
+
+    failed = False
+
+    async def send_buttons(self, to: str, body: str, buttons: list[Button], **headers: Any) -> str:
+        if not self.failed:
+            self.failed = True
+            raise ChannelError("boom")
+        return await super().send_buttons(to, body, buttons, **headers)
+
+
+class FailsOnceHistory(DbHistory):
+    """The first read of the history fails, like a database blip while the summary is told."""
+
+    failed = False
+
+    async def get(self, sender: str) -> list[Step]:
+        if not self.failed:
+            self.failed = True
+            raise SQLAlchemyError("boom")
+        return await super().get(sender)
+
+
+async def test_a_summary_that_fails_before_the_send_fails_the_job_and_offers_a_retry(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    business, channel = await add_business(sessions), FakeChannel()
+    chat = build_chat(
+        ChatParts(
+            model=SequenceModel([]),
+            image_gen=MockImageGen(),
+            renderer=MockRenderer(),
+            publisher=MockPublisher(delay_s=0),
+            images=PublicImages(),
+            background=BackgroundWork(),
+            public_backend_url="https://backend.test",
+            account_id=MOCK_ACCOUNT_ID,
+            assistant_name="Mora",
+            max_photo_mb=10,
+            max_posts_per_day=5,
+            max_videos_per_day=2,
+            history=FailsOnceHistory(sessions),
+        )
+    )
+    job_id = await queue(sessions, "generate_brand", business)
+    jobs, background = runner(
+        sessions,
+        {"generate_brand": generate_brand},
+        channel,
+        SequenceModel([brand_brain()]),
+        notify=chat.notify,
+    )
+
+    await jobs.run_due()
+    await background.join()
+
+    assert (await job_row(sessions, job_id)).status == "failed"
+    # The Owner never got the summary, and is told with the retry.
+    assert channel.buttons == [(PHONE, messages_es.JOB_FAILED, [f"retry:{job_id}"])]
+
+
+async def test_a_summary_that_cant_be_delivered_fails_the_job_and_offers_a_retry(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    business, channel = await add_business(sessions), FailsOnceChannel()
+    job_id = await queue(sessions, "generate_brand", business)
+    jobs, background = runner(
+        sessions, {"generate_brand": generate_brand}, channel, SequenceModel([brand_brain()])
+    )
+
+    await jobs.run_due()
+    await background.join()
+
+    assert (await job_row(sessions, job_id)).status == "failed"
+    assert channel.buttons == [(PHONE, messages_es.JOB_FAILED, [f"retry:{job_id}"])]
+    # The summary never reached the Owner, so the history has no note about it.
+    assert await DbHistory(sessions).get(PHONE) == [
+        user_step(JobFailed(job_id, "generate_brand").note())
+    ]
 
 
 async def test_a_correction_makes_a_new_version_from_the_previous_one(
@@ -381,7 +514,9 @@ async def test_a_correction_makes_a_new_version_from_the_previous_one(
 
 
 def router(sessions: async_sessionmaker[AsyncSession]) -> ButtonRouter:
-    return ButtonRouter(InMemoryPosts(), maker=None, publisher=None, sessions=sessions)  # type: ignore[arg-type]
+    return ButtonRouter(  # type: ignore[arg-type]
+        PostLifecycle(), maker=None, publisher=None, sessions=sessions, brand=BrandFlow(sessions)
+    )
 
 
 async def test_brand_ok_activates_the_business_once(
@@ -390,8 +525,8 @@ async def test_brand_ok_activates_the_business_once(
     business = await add_business(sessions, state="awaiting_brand_confirmation")
     buttons = router(sessions)
 
-    first = await buttons.handle(PHONE, "brand_ok", FakeChannel())
-    second = await buttons.handle(PHONE, "brand_ok", FakeChannel())
+    first = await buttons.handle(PHONE, "brand_ok", FakeChannel(), EventLog())
+    second = await buttons.handle(PHONE, "brand_ok", FakeChannel(), EventLog())
 
     assert (first, second) == (BrandConfirmed(), StaleButton())
     async with sessions() as db:
@@ -405,7 +540,7 @@ async def test_a_brand_change_queues_revise_mode_once(
     buttons = router(sessions)
     flow = BrandFlow(sessions)
 
-    asked = await buttons.handle(PHONE, "brand_fix", FakeChannel())
+    asked = await buttons.handle(PHONE, "brand_fix", FakeChannel(), EventLog())
     taken = await flow.revise(PHONE, "somos más formales")
     again = await flow.revise(PHONE, "y otra cosa")
 
@@ -418,7 +553,7 @@ async def test_a_brand_change_queues_revise_mode_once(
         "generating_brand",
         {"resume_state": "awaiting_brand_confirmation"},
     )
-    assert await buttons.handle(PHONE, "brand_ok", FakeChannel()) == StaleButton()
+    assert await buttons.handle(PHONE, "brand_ok", FakeChannel(), EventLog()) == StaleButton()
     assert [(job.kind, job.payload) for job in jobs] == [
         ("generate_brand", {"correction": "somos más formales"})
     ]
@@ -470,8 +605,8 @@ async def test_brand_buttons_are_stale_in_another_state(
     await add_business(sessions, state="active")
     buttons = router(sessions)
 
-    assert await buttons.handle(PHONE, "brand_ok", FakeChannel()) == StaleButton()
-    assert await buttons.handle(PHONE, "brand_fix", FakeChannel()) == StaleButton()
+    assert await buttons.handle(PHONE, "brand_ok", FakeChannel(), EventLog()) == StaleButton()
+    assert await buttons.handle(PHONE, "brand_fix", FakeChannel(), EventLog()) == StaleButton()
 
 
 async def test_retry_button_requeues_the_failed_job(
@@ -484,7 +619,7 @@ async def test_retry_button_requeues_the_failed_job(
         await db.commit()
     buttons = router(sessions)
 
-    first = await buttons.handle(PHONE, f"retry:{failed.id}", FakeChannel())
-    second = await buttons.handle(PHONE, f"retry:{failed.id}", FakeChannel())
+    first = await buttons.handle(PHONE, f"retry:{failed.id}", FakeChannel(), EventLog())
+    second = await buttons.handle(PHONE, f"retry:{failed.id}", FakeChannel(), EventLog())
 
     assert (first, second) == (JobRetried("generate_brand"), StaleButton())

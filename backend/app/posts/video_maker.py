@@ -1,4 +1,3 @@
-import asyncio
 import logging
 import time
 import uuid
@@ -8,6 +7,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from app.background import BackgroundWork
 from app.channels.base import ChannelPort
 from app.channels.inbound import mask
 from app.conversation.events import Event, Notify, VideoFailed, VideoSent
@@ -22,7 +22,8 @@ from app.videogen.base import (
     VideoGenUnavailable,
 )
 
-from .store import APPROVABLE, InMemoryPosts, Post, PostVideo
+from .lifecycle import PostLifecycle
+from .store import Post, PostVideo
 
 logger = logging.getLogger(__name__)
 
@@ -53,11 +54,13 @@ class VideoMaker:
     def __init__(
         self,
         video_gen: VideoGenPort,
-        posts: InMemoryPosts,
+        posts: PostLifecycle,
         videos: PublicVideos,
         public_base_url: str,
         max_videos_per_day: int,
         now: Callable[[], datetime] = local_now,
+        *,
+        background: BackgroundWork,
     ) -> None:
         self._video_gen = video_gen
         self._posts = posts
@@ -67,38 +70,39 @@ class VideoMaker:
         self._now = now
         self._generating: set[str] = set()
         self._videos_today: dict[str, tuple[date, int]] = {}
-        self._tasks: set[asyncio.Task[None]] = set()
-        self._notify: Notify | None = None
-
-    def on_event(self, callback: Notify) -> None:
-        """Register who tells the Owner about a video (wired where the chat handler is built)."""
-        self._notify = callback
+        self._background = background
 
     def create_video(
-        self, sender: str, arguments: dict[str, Any], channel: ChannelPort
+        self, sender: str, arguments: dict[str, Any], channel: ChannelPort, notify: Notify
     ) -> dict[str, Any]:
         """Check the guards and start the generation; the result goes back to the model."""
-        self._require_wired()
         try:
             args = CreateVideoArgs.model_validate(arguments)
         except ValidationError as exc:
             return {"error": "invalid_arguments", "detail": str(exc)}
-        source = self._posts.get(sender, args.post_id)
-        if source is None:
-            return {"error": "unknown_post"}
-        if source.status not in APPROVABLE:
-            return {"error": "post_not_pending", "status": source.status}
+        source = self._posts.approvable_post(sender, args.post_id)
+        if isinstance(source, dict):
+            return source
         if source.video is not None:
             return {"error": "already_video"}
-        return self._start(sender, source.source_photos, source.caption, args.direction, channel)
+        return self._start(
+            sender, source.source_photos, source.caption, args.direction, channel, notify
+        )
 
-    def remake(self, post: Post, channel: ChannelPort) -> dict[str, Any]:
+    def remake(self, post: Post, channel: ChannelPort, notify: Notify) -> dict[str, Any]:
         """Another video from the same request as `post` ([Sí, otro] after [Descartar])."""
-        self._require_wired()
-        return self._start(post.sender, post.source_photos, post.caption, post.brief, channel)
+        return self._start(
+            post.sender, post.source_photos, post.caption, post.brief, channel, notify
+        )
 
     def _start(
-        self, sender: str, photos: list[Photo], caption: str, direction: str, channel: ChannelPort
+        self,
+        sender: str,
+        photos: list[Photo],
+        caption: str,
+        direction: str,
+        channel: ChannelPort,
+        notify: Notify,
     ) -> dict[str, Any]:
         if not photos:
             return {"error": "no_photos"}
@@ -110,21 +114,11 @@ class VideoMaker:
         self._generating.add(sender)
         self._videos_today[sender] = (today, self._count_today(sender) + 1)
         post_id = uuid.uuid4().hex[:8]
-        task = asyncio.create_task(
-            self._generate(sender, post_id, photos, caption, direction.strip(), channel)
+        self._background.start(
+            self._generate(sender, post_id, photos, caption, direction.strip(), channel, notify),
+            f"video {post_id} for {mask(sender)}",
         )
-        self._tasks.add(task)
-        task.add_done_callback(self._tasks.discard)
         return {"post_id": post_id, "status": "generating"}
-
-    async def join(self) -> None:
-        """Wait for the running generations (tests, shutdown)."""
-        await asyncio.gather(*self._tasks)
-
-    def _require_wired(self) -> None:
-        """Refuse before any guard or spend: a clip nobody can announce is billed for nothing."""
-        if self._notify is None:
-            raise RuntimeError("VideoMaker.on_event was never called: nobody can tell the Owner")
 
     def _count_today(self, sender: str) -> int:
         day, count = self._videos_today.get(sender, (self._now().date(), 0))
@@ -142,6 +136,7 @@ class VideoMaker:
         caption: str,
         direction: str,
         channel: ChannelPort,
+        notify: Notify,
     ) -> None:
         started = time.monotonic()
         prompt = f"{VIDEO_PROMPT} {direction}".strip()
@@ -181,19 +176,7 @@ class VideoMaker:
             self._generating.discard(sender)
         # After the guard is released, and outside the try: a failing notify must not report a
         # failed video that the Owner already has.
-        await self._announce(sender, post_id, event, channel)
-
-    async def _announce(
-        self, sender: str, post_id: str, event: Event, channel: ChannelPort
-    ) -> None:
-        try:
-            if (
-                self._notify is None
-            ):  # `_require_wired` makes this unreachable; never escape the task
-                raise RuntimeError("VideoMaker.on_event was never called")
-            await self._notify(sender, event, channel)
-        except Exception:
-            logger.exception("event for video %s failed for %s", post_id, mask(sender))
+        await notify(sender, event, channel)
 
 
 def failure_reason(error: Exception) -> str:

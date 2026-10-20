@@ -1,7 +1,10 @@
 import logging
+from collections.abc import Callable
 
+from app.background import get_background_work
 from app.channels.base import ChannelPort
 from app.config import Settings
+from app.conversation.events import Notify
 from app.db.session import get_sessionmaker
 from app.instagram.factory import build_instagram
 from app.llm.client import GeminiChat
@@ -24,8 +27,13 @@ JOBS: dict[str, JobFunction] = {
 NOTIFY_ON_FAILURE = frozenset({"generate_brand"})
 
 
-def build_job_runner(settings: Settings, channel: ChannelPort) -> JobRunner | None:
-    """The runner, or None (logged) when the database, Storage or Gemini isn't configured."""
+def build_job_runner(
+    settings: Settings, channel: ChannelPort, owner_notify: Callable[[], Notify]
+) -> JobRunner | None:
+    """The runner, or None (logged) when the database, Storage or Gemini isn't configured.
+
+    `owner_notify` is resolved only once the runner will exist: it builds the conversation.
+    """
     missing = [
         name
         for name, value in (
@@ -57,9 +65,13 @@ def build_job_runner(settings: Settings, channel: ChannelPort) -> JobRunner | No
         storage,
         channel,
         model,
+        owner_notify(),
         NOTIFY_ON_FAILURE,
         checks=(
             PeriodicCheck("niche reports", CHECK_EVERY, enqueue_due_niche_reports),
-            PeriodicCheck("upload sweep", SWEEP_EVERY, upload_sweep(storage)),
+            PeriodicCheck(
+                "upload sweep", SWEEP_EVERY, upload_sweep(storage, get_background_work())
+            ),
         ),
+        background=get_background_work(),
     )

@@ -5,7 +5,7 @@ import pytest
 
 from app.channels.base import ChannelError, ChannelPort, InboundMessage
 from app.channels.inbound import EchoHandler, RateLimitedHandler
-from app.channels.router import get_inbound_handler
+from app.channels.router import get_conversation, get_inbound_handler
 from app.config import Settings
 from app.copy import messages_es
 from app.ratelimit import KeyedLocks, RateLimiter, TtlMap
@@ -237,8 +237,9 @@ async def test_a_failing_notice_does_not_break_the_webhook_task() -> None:
 def test_the_real_inbound_handler_is_wrapped_in_the_sender_limit(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # Router tests override get_inbound_handler, so only this one sees the production wiring.
-    get_inbound_handler.cache_clear()
+    # Router tests override get_inbound_handler, so only this one sees the production wiring
+    # (`get_conversation` wraps the handler).
+    get_conversation.cache_clear()
     monkeypatch.setattr(
         "app.channels.router.get_settings", lambda: Settings(inbound_handler="echo")
     )
@@ -248,4 +249,4 @@ def test_the_real_inbound_handler_is_wrapped_in_the_sender_limit(
         assert isinstance(handler._inner, EchoHandler)
         assert handler._notice == messages_es.RATE_LIMITED
     finally:
-        get_inbound_handler.cache_clear()
+        get_conversation.cache_clear()

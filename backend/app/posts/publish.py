@@ -5,6 +5,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from app.background import BackgroundWork
 from app.channels.base import ChannelPort
 from app.channels.inbound import mask
 from app.conversation.approval import Approval
@@ -19,7 +20,8 @@ from app.publishing.base import (
     PublishRetryable,
 )
 
-from .store import APPROVABLE, InMemoryPosts, Post
+from .lifecycle import ApprovedPost, PostLifecycle
+from .store import Post
 
 logger = logging.getLogger(__name__)
 
@@ -42,19 +44,20 @@ class PostPublisher:
     """`approve_post` before the database: guards in code, then a background publish.
 
     The Owner's explicit approval is computed from their message (`approval.decide`), never by
-    the model: only the post named by this turn's `Approval` can be published. T30 moves this onto
-    the job runner.
+    the model: only the post named by this turn's `Approval` can be published. The publish runs on
+    `BackgroundWork`; scheduling it durably is T30.
     """
 
     def __init__(
         self,
         publisher: PublisherPort,
-        posts: InMemoryPosts,
+        posts: PostLifecycle,
         images: PublicImages,
         public_base_url: str,
         account_id: str | None,
         sleep: Sleep = asyncio.sleep,
         *,
+        background: BackgroundWork,
         videos: PublicVideos | None = None,
     ) -> None:
         self._publisher = publisher
@@ -64,69 +67,68 @@ class PostPublisher:
         self._public_base_url = public_base_url.rstrip("/")
         self._account_id = account_id
         self._sleep = sleep
-        self._tasks: set[asyncio.Task[None]] = set()
-        self._notify: Notify | None = None
-
-    def on_event(self, callback: Notify) -> None:
-        """Register who tells the Owner how a publish ended (wired with the chat handler)."""
-        self._notify = callback
+        self._background = background
 
     def approve(
-        self, sender: str, arguments: dict[str, Any], approval: Approval, channel: ChannelPort
+        self,
+        sender: str,
+        arguments: dict[str, Any],
+        approval: Approval,
+        channel: ChannelPort,
+        notify: Notify,
     ) -> dict[str, Any]:
         """Check the guards and start the publish; the result goes back to the model."""
         try:
             args = ApprovePostArgs.model_validate(arguments)
         except ValidationError as exc:
             return {"error": "invalid_arguments", "detail": str(exc)}
-        post = self._posts.get(sender, args.post_id)
-        if post is None:
-            return {"error": "unknown_post"}
-        if post.status not in APPROVABLE:
-            return {"error": "post_not_pending", "status": post.status}
-        if approval.post_id != post.id:
-            result: dict[str, Any] = {"error": approval.reason}
-            if approval.pending:
-                result["pending"] = approval.pending
-            return result
-        return self._start(post, channel)
+        approved = self._posts.authorize_text(sender, args.post_id, approval)
+        if isinstance(approved, dict):
+            return approved
+        return self._start(approved, channel, notify)
 
-    def publish_approved(self, post: Post, channel: ChannelPort) -> dict[str, Any]:
+    def publish_approved(
+        self, sender: str, post_id: str, channel: ChannelPort, notify: Notify
+    ) -> dict[str, Any]:
         """[Publicar ahora]: the tap is the Owner's explicit approval (ADR 0007)."""
-        if post.status != "approved":
-            return {"error": "post_not_approved", "status": post.status}
-        return self._start(post, channel)
+        approved = self._posts.authorize_tap(sender, post_id)
+        if approved is None:
+            return {"error": "post_not_approved"}
+        return self._start(approved, channel, notify)
 
-    def retry(self, post: Post, channel: ChannelPort) -> dict[str, Any]:
+    def retry(
+        self, sender: str, post_id: str, channel: ChannelPort, notify: Notify
+    ) -> dict[str, Any]:
         """[Reintentar] after a definite failure, under a new idempotency key."""
-        if post.status != "failed":
-            return {"error": "post_not_failed", "status": post.status}
-        return self._start(post, channel)
+        approved = self._posts.authorize_retry(sender, post_id)
+        if approved is None:
+            return {"error": "post_not_failed"}
+        return self._start(approved, channel, notify)
 
-    def _start(self, post: Post, channel: ChannelPort) -> dict[str, Any]:
+    def _start(
+        self, approved: ApprovedPost, channel: ChannelPort, notify: Notify
+    ) -> dict[str, Any]:
         account_id = self._account_id
         if account_id is None:
-            logger.warning("cannot publish post %s: ZERNIO_ACCOUNT_ID is not set", post.id)
+            logger.warning("cannot publish post %s: ZERNIO_ACCOUNT_ID is not set", approved.post.id)
             return {"error": "need_ig"}
-        post.status = "publishing"  # before the task starts, so a second "subilo" finds it busy
-        post.publish_attempts += 1
-        task = asyncio.create_task(self._publish(post, account_id, channel))
-        self._tasks.add(task)
-        task.add_done_callback(self._tasks.discard)
+        post = self._posts.begin_publish(approved)
+        self._background.start(
+            self._publish(post, account_id, channel, notify),
+            f"publish {post.id} for {mask(post.sender)}",
+        )
         return {"post_id": post.id, "status": "publishing"}
 
-    async def join(self) -> None:
-        """Wait for the running publishes (tests, shutdown)."""
-        await asyncio.gather(*self._tasks)
-
-    async def _publish(self, post: Post, account_id: str, channel: ChannelPort) -> None:
+    async def _publish(
+        self, post: Post, account_id: str, channel: ChannelPort, notify: Notify
+    ) -> None:
         try:
             result = await self._attempt(post, account_id)
         except Exception:
             # The task's boundary: nobody awaits it, so log and tell the Owner.
             logger.exception("publishing post %s failed for %s", post.id, mask(post.sender))
             result = PublishResult(status="failed", error="unexpected error")
-        await self._finish(post, result, channel)
+        await self._finish(post, result, channel, notify)
 
     def _media(self, post: Post) -> PublishMedia:
         if post.video is not None:
@@ -177,24 +179,21 @@ class PostPublisher:
                 return PublishResult(status="failed", error=str(exc))
         return PublishResult(status="pending", error=str(uncertain))
 
-    async def _finish(self, post: Post, result: PublishResult, channel: ChannelPort) -> None:
+    async def _finish(
+        self, post: Post, result: PublishResult, channel: ChannelPort, notify: Notify
+    ) -> None:
         event: Event
         match result.status:
             case "published":
-                post.status = "published"
-                post.permalink = result.permalink
-                post.external_post_id = result.external_post_id
+                self._posts.published(post, result.permalink, result.external_post_id)
                 event = Published(post.id, result.permalink)
             case "failed":
-                post.status = "failed"
+                self._posts.failed(post)
                 event = PublishFailed(post.id)
             case _:  # pending (or scheduled): it may be live, so no failure and no re-publish
-                post.status = "publish_pending"
-                post.external_post_id = result.external_post_id
+                self._posts.publish_pending(post, result.external_post_id)
                 event = PublishPending(post.id)
         logger.info("post %s: %s (%s)", post.id, post.status, result.error or "ok")
-        if self._notify is None:
-            raise RuntimeError("PostPublisher.on_event was never called: nobody can tell the Owner")
         # The chat handler takes the sender's lock, so the Owner reads "lo subo" first and the
         # note lands after the turn that started this publish.
-        await self._notify(post.sender, event, channel)
+        await notify(post.sender, event, channel)

@@ -15,7 +15,7 @@ from app.onboarding import uploads
 from app.onboarding.uploads import read_upload
 from tests.conftest import make_image
 from tests.fakes import FakeChannel, ScriptedModel, text_reply
-from tests.test_chat_handler import EVENT_REPLY, SENDER, handler, message, step_text
+from tests.test_chat_handler import EVENT_REPLY, SENDER, build, message, step_text
 
 SIDE = 100
 OVER_CAP = (SIDE + 1, SIDE)
@@ -106,14 +106,14 @@ async def test_a_whatsapp_photo_over_the_cap_gets_a_short_reply(
     never_decoded(monkeypatch)
     model = ScriptedModel(replies=[text_reply(EVENT_REPLY)])
     channel = FakeChannel(media=make_image(OVER_CAP))
-    chat = handler(model)
+    chat, background = build(model)
 
-    await chat.handle(message("image"), channel)
-    await chat.join()
+    await chat.handler.handle(message("image"), channel)
+    await background.join()
 
     assert channel.sent == [(SENDER, EVENT_REPLY)]
     assert step_text(model.calls[0][-1]) == PhotoTooLarge().note()
-    assert chat._photos.recent(SENDER) == []
+    assert chat.photos.recent(SENDER) == []
 
 
 async def test_a_whatsapp_decompression_bomb_does_not_fail_the_turn(
@@ -122,10 +122,10 @@ async def test_a_whatsapp_decompression_bomb_does_not_fail_the_turn(
     monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", 1000)
     model = ScriptedModel(replies=[text_reply(EVENT_REPLY)])
     channel = FakeChannel(media=make_image((SIDE, SIDE)))
-    chat = handler(model)
+    chat, background = build(model)
 
-    await chat.handle(message("image"), channel)
-    await chat.join()
+    await chat.handler.handle(message("image"), channel)
+    await background.join()
 
     assert channel.sent == [(SENDER, EVENT_REPLY)]
     assert step_text(model.calls[0][-1]) == PhotoUnreadable().note()

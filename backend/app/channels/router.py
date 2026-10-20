@@ -3,13 +3,16 @@ import logging
 import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from dataclasses import replace
 from functools import cache
 from typing import Annotated
 
 from fastapi import APIRouter, BackgroundTasks, Depends, FastAPI, Header, HTTPException, Request
 
+from app.background import get_background_work
 from app.config import Settings, get_settings
-from app.conversation.factory import build_inbound_handler
+from app.conversation.events import Notify
+from app.conversation.factory import Conversation, build_conversation
 from app.copy import messages_es
 from app.db.session import get_sessionmaker
 from app.media.public import get_public_images, get_public_videos
@@ -40,7 +43,7 @@ def get_channel() -> ChannelPort:
 def get_dedupe_store() -> DedupeStore:
     # With the database the ids survive a deploy (#105); without it a restart forgets them.
     if get_settings().database_url:
-        return DbDedupeStore(get_sessionmaker())
+        return DbDedupeStore(get_sessionmaker(), get_background_work())
     return InMemoryDedupeStore()
 
 
@@ -50,14 +53,29 @@ def get_clock() -> float:
 
 
 @cache
-def get_inbound_handler() -> InboundHandler:
-    handler = build_inbound_handler(
+def get_conversation() -> Conversation:
+    conversation = build_conversation(
         get_settings(), get_public_images(), get_publisher(), get_public_videos()
     )
     # In front of everything the factory builds, the no-database chat handler included (#106).
-    return RateLimitedHandler(
-        handler, RateLimiter(TURNS_BURST, TURNS_PER_MINUTE), messages_es.RATE_LIMITED
+    # `notify` is not wrapped: it carries events raised by code, not the Owner's turns.
+    return replace(
+        conversation,
+        handler=RateLimitedHandler(
+            conversation.handler,
+            RateLimiter(TURNS_BURST, TURNS_PER_MINUTE),
+            messages_es.RATE_LIMITED,
+        ),
     )
+
+
+def get_inbound_handler() -> InboundHandler:
+    return get_conversation().handler
+
+
+def get_owner_notify() -> Notify:
+    """How code outside the chat (jobs, the onboarding API) tells the Owner something."""
+    return get_conversation().notify
 
 
 @asynccontextmanager

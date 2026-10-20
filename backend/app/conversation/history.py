@@ -12,8 +12,9 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.channels.inbound import mask
-from app.db.models import Business, ConversationStep
-from app.llm.client import ChatModel, Content, LLMError, Step, text_content, user_step
+from app.db.models import ConversationStep
+from app.knowledge.db import business_of
+from app.llm.client import ChatModel, Content, LLMError, Step, text_content
 from app.prompts import load_prompt
 
 logger = logging.getLogger(__name__)
@@ -112,13 +113,12 @@ class DbHistory:
 
     async def summary(self, sender: str) -> str | None:
         async with self._sessions() as db:
-            return await db.scalar(
-                select(Business.conversation_summary).where(Business.owner_phone == sender)
-            )
+            business = await business_of(db, sender)
+            return business.conversation_summary if business else None
 
     async def compact(self, sender: str, drop: int, summary: str | None) -> None:
         async with self._sessions() as db:
-            business = await db.scalar(select(Business).where(Business.owner_phone == sender))
+            business = await business_of(db, sender)
             if business is None:
                 return
             oldest = (
@@ -134,20 +134,11 @@ class DbHistory:
 
     async def _business_id(self, db: AsyncSession, sender: str) -> uuid.UUID | None:
         if sender not in self._business_ids:
-            business_id = await db.scalar(select(Business.id).where(Business.owner_phone == sender))
-            if business_id is None:
+            business = await business_of(db, sender)
+            if business is None:
                 return None
-            self._business_ids[sender] = business_id
+            self._business_ids[sender] = business.id
         return self._business_ids[sender]
-
-
-async def record_note(
-    sessions: async_sessionmaker[AsyncSession], business_id: uuid.UUID, note: str
-) -> None:
-    """Add a system note to a Business's history from outside the chat (a job's message)."""
-    async with sessions() as db:
-        db.add(ConversationStep(business_id=business_id, step=user_step(note)))
-        await db.commit()
 
 
 class ConversationSummary(BaseModel):

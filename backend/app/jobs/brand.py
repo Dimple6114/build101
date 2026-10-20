@@ -9,11 +9,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.brand_strategist import BrandInputs, write_brand_brain
 from app.agents.schemas import BrandBrain
-from app.channels.base import Button, ChannelPort
-from app.conversation.brand import RESUME_STATE
-from app.conversation.history import record_note
-from app.copy import messages_es
-from app.db.models import BrandAsset, BrandBrainVersion, Business, Job, Product
+from app.conversation.events import BrandSummaryReady
+from app.db.models import BrandAsset, BrandBrainVersion, Business, Job
+from app.knowledge.db import active_products, latest_brand_brain
+from app.onboarding.state import brand_brain_written, resume_after_failed_revision
 
 from .runner import JobContext
 
@@ -24,11 +23,6 @@ logger = logging.getLogger(__name__)
 ANALYSES_WAIT_S = 60.0
 INPUT_JOBS = ("analyze_asset", "import_instagram")
 ANALYSES_POLL_S = 2.0
-WHATSAPP_BODY_MAX = 1024
-BRAND_SUMMARY_NOTE = (
-    "[brand summary sent] The Owner got the summary of their brand (<brand_summary_sent>) with "
-    "the buttons Sí, es mi marca and Corregir algo."
-)
 
 
 async def generate_brand(context: JobContext, payload: dict[str, Any]) -> dict[str, Any]:
@@ -76,14 +70,14 @@ async def _generate_brand(
                 reason="correction" if correction else "onboarding",
             )
         )
-        business.onboarding_state = "awaiting_brand_confirmation"
-        business.conversation_state = {}
+        brand_brain_written(business)
         await db.commit()
         owner_phone, channel_kind, name = business.owner_phone, business.channel, business.name
 
     if channel_kind == "whatsapp":
-        await send_brand_summary(context.channel, owner_phone, name or brain.business_name, brain)
-        await record_note(context.sessions, business_id, BRAND_SUMMARY_NOTE)
+        # A failed delivery fails the job, so the Owner is told and can retry (`JobFailed`).
+        event = BrandSummaryReady(name or brain.business_name, brain.whatsapp_summary)
+        await context.notify(owner_phone, event, context.channel)
     return {"version": version}
 
 
@@ -91,27 +85,8 @@ async def _resume(context: JobContext, business_id: uuid.UUID) -> None:
     """A failed revision of a confirmed brand puts the Business back where it was (ADR 0030)."""
     async with context.sessions() as db:
         business = await db.get_one(Business, business_id, with_for_update=True)
-        previous = business.conversation_state.get(RESUME_STATE)
-        if business.onboarding_state == "generating_brand" and previous:
-            business.onboarding_state = previous
-            business.conversation_state = {}
+        if resume_after_failed_revision(business):
             await db.commit()
-
-
-async def send_brand_summary(
-    channel: ChannelPort, owner_phone: str, business_name: str, brain: BrandBrain
-) -> None:
-    body = messages_es.brand_summary(business_name, brain.whatsapp_summary)
-    buttons = [
-        Button(id="brand_ok", title=messages_es.BUTTON_BRAND_OK),
-        Button(id="brand_fix", title=messages_es.BUTTON_BRAND_FIX),
-    ]
-    if len(body) <= WHATSAPP_BODY_MAX:
-        await channel.send_buttons(owner_phone, body, buttons)
-        return
-    # A summary over the limit even after the Strategist's retry: text first, then the question.
-    await channel.send_text(owner_phone, body.removesuffix("¿Es así?").rstrip())
-    await channel.send_buttons(owner_phone, "¿Es así?", buttons)
 
 
 async def _wait_for_analyses(context: JobContext, business_id: uuid.UUID) -> None:
@@ -137,26 +112,10 @@ async def _wait_for_analyses(context: JobContext, business_id: uuid.UUID) -> Non
         await asyncio.sleep(ANALYSES_POLL_S)
 
 
-async def latest_brand_brain(db: AsyncSession, business_id: uuid.UUID) -> BrandBrain | None:
-    row = await db.scalar(
-        select(BrandBrainVersion)
-        .where(BrandBrainVersion.business_id == business_id)
-        .order_by(BrandBrainVersion.version.desc())
-        .limit(1)
-    )
-    return BrandBrain.model_validate(row.data) if row else None
-
-
 async def _inputs(
     db: AsyncSession, business: Business, previous: BrandBrain | None, correction: str | None
 ) -> BrandInputs:
-    products = (
-        await db.scalars(
-            select(Product)
-            .where(Product.business_id == business.id, Product.archived_at.is_(None))
-            .order_by(Product.position)
-        )
-    ).all()
+    products = await active_products(db, business.id)
     assets = (
         await db.scalars(
             select(BrandAsset)

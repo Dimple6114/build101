@@ -14,13 +14,13 @@ async def answer_with_a_yes(question: str, yes: str) -> tuple[dict[str, str], st
     """The tool result the model got for `approve_post` after `yes`, and the post's status."""
     model = ScriptedModel(replies=[text_reply(question), APPROVE, text_reply("ok")])
     chat, _ = build(model)
-    chat._store.add(Post(POST_ID, SENDER, [PostImage("/media/a.jpg", b"x")], "Mesa de roble"))
+    chat.lifecycle.add(Post(POST_ID, SENDER, [PostImage("/media/a.jpg", b"x")], "Mesa de roble"))
     channel = FakeChannel()
 
-    await chat.handle(message("text", text="¿cómo quedó?"), channel)
-    await chat.handle(message("text", text=yes), channel)
+    await chat.handler.handle(message("text", text="¿cómo quedó?"), channel)
+    await chat.handler.handle(message("text", text=yes), channel)
 
-    post = chat._store.get(SENDER, POST_ID)
+    post = chat.lifecycle.get(SENDER, POST_ID)
     assert post
     return json.loads(model.calls[-1][-1]["result"]), post.status
 

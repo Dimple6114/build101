@@ -179,13 +179,15 @@ sequenceDiagram
 
 ## Background jobs
 
-Hackathon implementation (`app/jobs/runner.py`, T16): a small in-process `JobRunner` that polls `jobs` every second, claims `queued` rows with `FOR UPDATE SKIP LOCKED` (so a job starts only after the transaction that queued it commits, and jobs queued before a restart still run), and runs each as an `asyncio` task. It
+**One mechanism for all background work** (`app/background.py`, [ADR 0005](../decisions/0005-single-instance-in-process-jobs.md)): `BackgroundWork` is the one place that starts an `asyncio` task, keeps it alive, waits for it (`join`, tests) and cancels it at shutdown (`stop`, called once from the app's lifespan). A failure that escapes a task is logged there, once, with the task's name. Post generation, publishing, video generation, the photo keeper, the history compaction and the photo debounce run on it, and so do the `jobs` below. They don't use the `jobs` table: they work with in-memory Posts and photos, so they run without a database, and nothing about them survives a restart (T17, T19). Work that turns a failure into something else keeps its own `except`: a `PostFailed` event, a failed `jobs` row.
+
+Hackathon implementation (`app/jobs/runner.py`, T16): a small in-process `JobRunner` that polls `jobs` every second, claims `queued` rows with `FOR UPDATE SKIP LOCKED` (so a job starts only after the transaction that queued it commits, and jobs queued before a restart still run), and runs each as a `BackgroundWork` task. It
 
 - writes a `jobs` row (`queued → running → succeeded | failed`) with `kind`, `payload`, `result`, `error`;
-- catches exceptions, marks the job failed, and sends `job_failed` to the owner;
+- catches exceptions, marks the job failed, and raises the `JobFailed` event for the Owner (`notify`, sent as fixed text);
 - limits concurrency with a semaphore (`MAX_CONCURRENT_JOBS=4`).
 
-`running` jobs older than 5 minutes were left by a process that died (a deploy, a dev reload) and are marked `failed`, at startup and then every minute (no automatic retries in the demo). Only `generate_brand` sends `job_failed` (with `retry:{job_id}`); a failed photo analysis is only logged, since the brand is generated without it. `retry:{job_id}` queues a copy and records `retried_by` on the failed row, so a second tap does nothing.
+`running` jobs older than 5 minutes were left by a process that died (a deploy, a dev reload) and are marked `failed`, at startup and then every minute (no automatic retries in the demo). Only `generate_brand` raises `JobFailed` (the `job_failed` text with `retry:{job_id}`); a failed photo analysis is only logged, since the brand is generated without it. `retry:{job_id}` queues a copy and records `retried_by` on the failed row, so a second tap does nothing.
 
 Besides queueing jobs, the poller runs small periodic checks on its first round and then every so often (`PeriodicCheck`). One is the **orphaned-upload sweep** (`app/jobs/uploads.py`, hourly): per Business it removes Storage objects whose asset is archived or `failed`, and objects with no asset row once older than the signed upload URL lifetime (2 h; rows can trail their object, and after that the URL can no longer be used). An object is protected by the asset id in its name, so the converted-HEIC original and the `-llm` copy of an active asset stay. Assets still `uploading` and names the sweep doesn't recognise are never touched. A round runs as a background task, so it never delays claiming jobs, and a round is skipped while the previous one is still running; a Storage failure ends the round after one log line. `/complete` also removes the files of an asset it marks `failed`; the sweep only catches what that missed.
 
@@ -225,9 +227,11 @@ build101/
 │   │   ├── main.py           # FastAPI app, routers, startup
 │   │   ├── config.py         # pydantic-settings
 │   │   ├── api/              # webhooks_whatsapp.py, onboarding.py, dashboard.py, uploads.py, dev.py
-│   │   ├── conversation/     # onboarding.py (OnboardingGate: Flow 1 before the web form, wraps chat.py), chat.py (orchestrator loop),
-│   │   │                     # tools.py, approval.py, button_router.py, brand.py, history.py, photos.py, factory.py,
+│   │   ├── conversation/     # onboarding.py (OnboardingGate: Flow 1 before the web form, wraps chat.py), chat.py (routes each kind of message), turns.py (one orchestrator turn: Owner and event turns),
+│   │   │                     # toolbox.py (tool dispatch), photo_batches.py (photo debounce), tools.py (schemas), approval.py, button_router.py, brand.py, history.py, photos.py, outbound.py (the one way to send an event to the Owner), factory.py,
 │   │   │                     # prompts/ (orchestrator.md + making_posts.md, publishing.md, rules.md); planned: state.py
+│   │   ├── posts/            # lifecycle.py (PostLifecycle: every Post state change and the Approval inputs), store.py (InMemoryPosts), maker.py, video_maker.py, publish.py, drafts.py
+│   │   ├── knowledge/        # base.py (Knowledge: what the Agency knows about a Business), db.py (DbKnowledge + readers), local.py (LocalKnowledge, no database)
 │   │   ├── agents/           # asset_analyst.py, brand_strategist.py, content_strategist.py,
 │   │   │                     # copywriter.py, art_director.py, text_checker.py, schemas.py, prompts/*.md
 │   │   ├── carousel/         # schemas.py (CarouselCopy, CarouselBrief, TextCheck), prompts.py (build_slide_prompt), generator.py (CarouselGenerator)

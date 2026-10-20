@@ -15,15 +15,16 @@ from fastapi import APIRouter, BackgroundTasks, Depends, Response
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.channels.base import ChannelError, ChannelPort
-from app.channels.router import get_channel
+from app.channels.base import ChannelPort
+from app.channels.router import get_channel, get_owner_notify
 from app.config import Settings, get_settings
-from app.copy import messages_es
+from app.conversation.events import BrandGenerating, Notify
 from app.db.models import AssetProduct, BrandAsset, Business, MagicLink, Product, SocialAccount
 from app.db.session import get_session
 from app.jobs.queue import enqueue
 from app.onboarding import schemas
 from app.onboarding.links import hash_token
+from app.onboarding.state import form_submitted
 from app.onboarding.uploads import (
     EXTENSIONS,
     ImageTooLarge,
@@ -400,6 +401,7 @@ async def complete_onboarding(
     session: SessionDep,
     background: BackgroundTasks,
     channel: Annotated[ChannelPort, Depends(get_channel)],
+    notify: Annotated[Notify, Depends(get_owner_notify)],
 ) -> schemas.CompleteResponse:
     link, business = onboarding.link, onboarding.business
     # The lock serializes a double submit; any completed link of the Business counts, so a
@@ -413,11 +415,11 @@ async def complete_onboarding(
 
     await _check_complete(session, business)
     link.completed_at = datetime.now(UTC)
-    business.onboarding_state = "generating_brand"
+    form_submitted(business)
     enqueue(session, "generate_brand", business.id, {})
     await session.commit()
     if business.channel == "whatsapp":
-        background.add_task(_send_brand_generating, channel, business.owner_phone)
+        background.add_task(_send_brand_generating, notify, channel, business.owner_phone)
     return schemas.CompleteResponse(status="generating_brand")
 
 
@@ -575,10 +577,10 @@ async def _check_complete(session: AsyncSession, business: Business) -> None:
         raise ApiError(422, "missing_photos", MISSING_PHOTOS)
 
 
-async def _send_brand_generating(channel: ChannelPort, owner_phone: str) -> None:
+async def _send_brand_generating(notify: Notify, channel: ChannelPort, owner_phone: str) -> None:
     try:
-        await channel.send_text(owner_phone, messages_es.BRAND_GENERATING)
-    except ChannelError:
+        await notify(owner_phone, BrandGenerating(), channel)
+    except Exception:
         logger.exception("brand_generating was not sent")
 
 

@@ -2,15 +2,15 @@ import asyncio
 import logging
 import time
 import uuid
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
-from sqlalchemy.exc import SQLAlchemyError
 
 from app.agents.schemas import BrandBrain
+from app.background import BackgroundWork
 from app.carousel.generator import CarouselGenerator
 from app.carousel.schemas import MAX_SLIDES
 from app.channels.base import ChannelPort
@@ -19,13 +19,15 @@ from app.conversation.events import Event, Notify, PostFailed, PostSent
 from app.conversation.photos import InMemoryPhotos, Photo, local_now
 from app.copy import messages_es
 from app.imagegen.base import ImageGenPort
+from app.knowledge.base import BusinessKnowledge, Knowledge
 from app.media.images import add_logo, to_post_image
 from app.media.public import PublicImages
 from app.rendering.base import RendererPort
 from app.rendering.slides import render_slides
 
 from .drafts import PostDrafter, PreviousPost
-from .store import APPROVABLE, InMemoryPosts, Post, PostImage
+from .lifecycle import PostLifecycle
+from .store import Post, PostImage
 
 logger = logging.getLogger(__name__)
 
@@ -73,8 +75,8 @@ class PostMaker:
 
     The result is an event (`PostSent` / `PostFailed`) for the orchestrator, which writes the
     message and keeps the note in the history, so the model knows what was sent
-    ("cambiale el título"). T19 moves the guards onto `posts` and the generation onto the job
-    runner (T16, T17).
+    ("cambiale el título"). The generation runs on `BackgroundWork`, and the guards stay in memory
+    like the Posts they protect: both move to the database together (T19).
     """
 
     def __init__(
@@ -84,13 +86,13 @@ class PostMaker:
         renderer: RendererPort,
         photos: InMemoryPhotos,
         images: PublicImages,
-        posts: InMemoryPosts,
+        posts: PostLifecycle,
         public_base_url: str,
         max_posts_per_day: int,
-        brand_of: Callable[[str], Awaitable[BrandBrain | None]] | None = None,
+        knowledge: Knowledge | None = None,
         now: Callable[[], datetime] = local_now,
-        notes_of: Callable[[str], Awaitable[list[str]]] | None = None,
-        trends_of: Callable[[str], Awaitable[str | None]] | None = None,
+        *,
+        background: BackgroundWork,
     ) -> None:
         self._drafter = drafter
         self._image_gen = image_gen
@@ -100,21 +102,14 @@ class PostMaker:
         self._posts = posts
         self._public_base_url = public_base_url.rstrip("/")
         self._max_posts_per_day = max_posts_per_day
-        self._brand_of = brand_of
-        self._notes_of = notes_of
-        self._trends_of = trends_of
+        self._knowledge = knowledge
         self._now = now
         self._generating: set[str] = set()
         self._designs_today: dict[str, tuple[date, int]] = {}
-        self._tasks: set[asyncio.Task[None]] = set()
-        self._notify: Notify | None = None
-
-    def on_event(self, callback: Notify) -> None:
-        """Register who tells the Owner about a post (wired where the chat handler is built)."""
-        self._notify = callback
+        self._background = background
 
     def create_post(
-        self, sender: str, arguments: dict[str, Any], channel: ChannelPort
+        self, sender: str, arguments: dict[str, Any], channel: ChannelPort, notify: Notify
     ) -> dict[str, Any]:
         """Check the guards and start the generation; the result goes back to the model."""
         try:
@@ -128,10 +123,10 @@ class PostMaker:
             return {"error": "no_photos"}
         old = self._posts.get(sender, args.replaces) if args.replaces else None
         remake = Remake(previous_post(old, change=None)) if old else None
-        return self._start(sender, args, photos, channel, remake)
+        return self._start(sender, args, photos, channel, notify, remake)
 
     def revise_post(
-        self, sender: str, arguments: dict[str, Any], channel: ChannelPort
+        self, sender: str, arguments: dict[str, Any], channel: ChannelPort, notify: Notify
     ) -> dict[str, Any]:
         """Remake a sent post with one change, keeping the rest; a caption change keeps the
         images, so it generates nothing."""
@@ -139,11 +134,9 @@ class PostMaker:
             args = RevisePostArgs.model_validate(arguments)
         except ValidationError as exc:
             return {"error": "invalid_arguments", "detail": str(exc)}
-        old = self._posts.get(sender, args.post_id)
-        if old is None:
-            return {"error": "unknown_post"}
-        if old.status not in APPROVABLE:
-            return {"error": "post_not_pending", "status": old.status}
+        old = self._posts.approvable_post(sender, args.post_id)
+        if isinstance(old, dict):
+            return old
         if old.video is not None:
             # A caption-only remake would drop the clip; another take is a new `create_video`.
             return {"error": "video_post"}
@@ -159,9 +152,9 @@ class PostMaker:
         )
         kept = [image.data for image in old.images] if args.part == "caption" else None
         remake = Remake(previous_post(old, change=args.change), kept)
-        return self._start(sender, create, old.source_photos, channel, remake)
+        return self._start(sender, create, old.source_photos, channel, notify, remake)
 
-    def remake(self, post: Post, channel: ChannelPort) -> dict[str, Any]:
+    def remake(self, post: Post, channel: ChannelPort, notify: Notify) -> dict[str, Any]:
         """Another post from the same request as `post` ([Sí, otro] after [Descartar])."""
         args = CreatePostArgs(
             brief=post.brief,
@@ -170,7 +163,7 @@ class PostMaker:
             slide_count=post.slide_count,
             with_logo=post.with_logo,
         )
-        return self._start(post.sender, args, post.source_photos, channel)
+        return self._start(post.sender, args, post.source_photos, channel, notify)
 
     def _start(
         self,
@@ -178,6 +171,7 @@ class PostMaker:
         args: CreatePostArgs,
         photos: list[Photo],
         channel: ChannelPort,
+        notify: Notify,
         remake: Remake | None = None,
     ) -> dict[str, Any]:
         if sender in self._generating:
@@ -201,16 +195,11 @@ class PostMaker:
         for photo in photos:
             photo.used = True
         post_id = uuid.uuid4().hex[:8]
-        task = asyncio.create_task(
-            self._generate(sender, post_id, args, photos, logo, channel, remake)
+        self._background.start(
+            self._generate(sender, post_id, args, photos, logo, channel, notify, remake),
+            f"post {post_id} for {mask(sender)}",
         )
-        self._tasks.add(task)
-        task.add_done_callback(self._tasks.discard)
         return {"post_id": post_id, "status": "generating"}
-
-    async def join(self) -> None:
-        """Wait for the running generations (tests, shutdown)."""
-        await asyncio.gather(*self._tasks)
 
     async def _generate(
         self,
@@ -220,15 +209,22 @@ class PostMaker:
         photos: list[Photo],
         logo: bytes | None,
         channel: ChannelPort,
+        notify: Notify,
         remake: Remake | None = None,
     ) -> None:
         started = time.monotonic()
         event: Event
         try:
-            brand = await self._brand(sender, post_id)
-            notes = await self._notes(sender, post_id)
-            trends = await self._trends(sender, post_id)
-            post = await self._render(args, photos, brand, logo, notes, remake, trends)
+            known = await self._known(sender)
+            post = await self._render(
+                args,
+                photos,
+                known.brand,
+                logo,
+                [note.text for note in known.notes],
+                remake,
+                known.trend_notes,
+            )
             paths = await self._send(sender, post.images, post.text, channel)
             self._keep(sender, post_id, args, photos, paths, post)
             event = PostSent(
@@ -255,53 +251,13 @@ class PostMaker:
             self._generating.discard(sender)
         # After the guard is released, and outside the try: a failing notify must not report a
         # failed post that the Owner already has.
-        await self._announce(sender, post_id, event, channel)
+        await notify(sender, event, channel)
 
-    async def _brand(self, sender: str, post_id: str) -> BrandBrain | None:
-        """The sender's Brand Brain; without it when the database fails, rather than no post."""
-        if self._brand_of is None:
-            return None
-        try:
-            return await self._brand_of(sender)
-        except SQLAlchemyError:
-            logger.warning(
-                "post %s for %s goes without the Brand Brain", post_id, mask(sender), exc_info=True
-            )
-            return None
-
-    async def _notes(self, sender: str, post_id: str) -> list[str]:
-        """The Owner's notes; without them when the database fails, rather than no post."""
-        if self._notes_of is None:
-            return []
-        try:
-            return await self._notes_of(sender)
-        except SQLAlchemyError:
-            logger.warning(
-                "post %s for %s goes without the notes", post_id, mask(sender), exc_info=True
-            )
-            return []
-
-    async def _trends(self, sender: str, post_id: str) -> str | None:
-        """The niche's trend notes; without them when the database fails, rather than no post."""
-        if self._trends_of is None:
-            return None
-        try:
-            return await self._trends_of(sender)
-        except SQLAlchemyError:
-            logger.warning(
-                "post %s for %s goes without the trend notes", post_id, mask(sender), exc_info=True
-            )
-            return None
-
-    async def _announce(
-        self, sender: str, post_id: str, event: Event, channel: ChannelPort
-    ) -> None:
-        if self._notify is None:
-            raise RuntimeError("PostMaker.on_event was never called: nobody can tell the Owner")
-        try:
-            await self._notify(sender, event, channel)
-        except Exception:
-            logger.exception("event for post %s failed for %s", post_id, mask(sender))
+    async def _known(self, sender: str) -> BusinessKnowledge:
+        """What the Agency knows about the sender's Business; a post makes do with nothing."""
+        if self._knowledge is None:
+            return BusinessKnowledge()
+        return await self._knowledge.of(sender)
 
     async def _render(
         self,
@@ -393,13 +349,10 @@ class PostMaker:
         )
         if args.replaces is None:
             return
-        old = self._posts.get(sender, args.replaces)
-        if old is None or old.status not in APPROVABLE:
+        if not self._posts.retire(sender, args.replaces):
             logger.info(
                 "post %s replaces %s, which is not pending: ignored", post_id, args.replaces
             )
-            return
-        old.status = "replaced"
 
     async def _send(
         self, sender: str, images: list[bytes], caption: str, channel: ChannelPort

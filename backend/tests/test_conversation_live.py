@@ -10,21 +10,19 @@ from dataclasses import dataclass, field
 import pytest
 
 from app.agents.schemas import BrandBrain
+from app.background import BackgroundWork
 from app.channels.base import InboundMessage
 from app.config import get_settings
-from app.conversation.button_router import ButtonRouter
-from app.conversation.chat import ChatHandler
-from app.conversation.context import CatalogItem, OwnerContext
 from app.conversation.events import PostSent
+from app.conversation.factory import Chat, ChatParts, build_chat
 from app.conversation.history import Compactor, InMemoryHistory
 from app.conversation.notes import InMemoryNotes
 from app.conversation.photos import InMemoryPhotos
+from app.knowledge.base import BusinessKnowledge, CatalogItem
 from app.llm.client import GeminiChat
 from app.media.public import PublicImages
-from app.posts.drafts import PostDrafter
-from app.posts.maker import PostMaker
-from app.posts.publish import PostPublisher
-from app.posts.store import InMemoryPosts, Post, PostImage
+from app.posts.lifecycle import PostLifecycle
+from app.posts.store import Post, PostImage
 from app.publishing.mock import MOCK_ACCOUNT_ID, MockPublisher
 from app.rendering.mock import MockRenderer
 from tests.conftest import make_image
@@ -37,28 +35,29 @@ POST_ID = "live0001"
 
 
 @dataclass
-class FixedContexts:
+class FixedKnowledge:
     brand: BrandBrain
     catalog: list[CatalogItem] = field(default_factory=list)
 
-    async def load(self, sender: str) -> OwnerContext:
-        return OwnerContext(brand=self.brand, catalog=self.catalog)
+    async def of(self, sender: str) -> BusinessKnowledge:
+        return BusinessKnowledge(brand=self.brand, catalog=self.catalog)
 
 
 @dataclass
 class Rig:
-    chat: ChatHandler
+    chat: Chat
+    background: BackgroundWork
     history: InMemoryHistory
     notes: InMemoryNotes
-    store: InMemoryPosts
+    store: PostLifecycle
     photos: InMemoryPhotos
     image_gen: CountingImageGen
     channel: FakeChannel
 
     async def say(self, text: str) -> str:
         sent = len(self.channel.sent)
-        await self.chat.handle(text_message(text), self.channel)
-        await self.chat.join()
+        await self.chat.handler.handle(text_message(text), self.channel)
+        await self.background.join()
         return " ".join(body for _, body in self.channel.sent[sent:])
 
     async def tools_called(self) -> list[str]:
@@ -85,44 +84,34 @@ def rig(compactor_budget: tuple[int, int] | None = None) -> Rig:
     if not settings.gemini_api_key:
         pytest.skip("GEMINI_API_KEY is not set")
     model = GeminiChat.from_api_key(settings.gemini_api_key, settings.gemini_chat_model)
-    history, notes, store = InMemoryHistory(), InMemoryNotes(), InMemoryPosts()
-    photos = InMemoryPhotos()
-    images, image_gen = PublicImages(), CountingImageGen()
-    posts = PostMaker(
-        PostDrafter(model),
-        image_gen,
-        MockRenderer(),
-        photos,
-        images,
-        store,
-        "https://backend.test",
-        5,
+    history, notes = InMemoryHistory(), InMemoryNotes()
+    image_gen, background = CountingImageGen(), BackgroundWork()
+    chat = build_chat(
+        ChatParts(
+            model=model,
+            image_gen=image_gen,
+            renderer=MockRenderer(),
+            publisher=MockPublisher(delay_s=0),
+            images=PublicImages(),
+            background=background,
+            public_backend_url="https://backend.test",
+            account_id=MOCK_ACCOUNT_ID,
+            assistant_name="Neitor",
+            max_photo_mb=10,
+            max_posts_per_day=5,
+            max_videos_per_day=2,
+            history=history,
+            notes=notes,
+            knowledge=FixedKnowledge(
+                brand_brain(),
+                [CatalogItem("Mesa nórdica de roble", "$U 18.500", "Mesa de comedor para 6")],
+            ),
+            compactor=Compactor(history, model, *compactor_budget) if compactor_budget else None,
+        )
     )
-    publisher = PostPublisher(
-        MockPublisher(delay_s=0), store, images, "https://backend.test", MOCK_ACCOUNT_ID
+    return Rig(
+        chat, background, history, notes, chat.lifecycle, chat.photos, image_gen, FakeChannel()
     )
-    compactor = Compactor(history, model, *compactor_budget) if compactor_budget else None
-    chat = ChatHandler(
-        model,
-        history,
-        photos,
-        posts,
-        publisher,
-        store,
-        ButtonRouter(store, posts, publisher, sessions=None),
-        None,
-        assistant_name="Neitor",
-        max_photo_mb=10,
-        notes=notes,
-        contexts=FixedContexts(  # type: ignore[arg-type]
-            brand_brain(),
-            [CatalogItem("Mesa nórdica de roble", "$U 18.500", "Mesa de comedor para 6")],
-        ),
-        compactor=compactor,
-    )
-    posts.on_event(chat.notify)
-    publisher.on_event(chat.notify)
-    return Rig(chat, history, notes, store, photos, image_gen, FakeChannel())
 
 
 async def sent_post(rig: Rig, caption: str) -> None:
