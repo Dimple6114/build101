@@ -24,6 +24,9 @@ class Settings(BaseSettings):
     frontend_url: str = "http://localhost:3000"
     frontend_origins: str = "http://localhost:3000"
     whatsapp_bot_number: str | None = None  # for wa.me links, digits only
+    # The closed pilot (#186): comma-separated WhatsApp numbers let in, on top of the rows of
+    # pilot_senders. With neither, nobody gets in with ENV=prod and everyone does elsewhere
+    pilot_senders: str = ""
 
     enable_dev_endpoints: bool = False
     dev_token: str | None = None
@@ -82,6 +85,9 @@ class Settings(BaseSettings):
     zernio_base_url: str = "https://zernio.com/api/v1"
     zernio_profile_id: str | None = None
     zernio_account_id: str | None = None
+    # The Owner whose Instagram ZERNIO_ACCOUNT_ID is: only their Approvals publish (#186, until
+    # #185). Unset, nobody publishes with ENV=prod and everyone does elsewhere
+    zernio_owner_phone: str | None = None
 
     # Reading the Owner's Instagram through our own Meta app (ADR 0028). INSTAGRAM = meta | mock
     instagram: Literal["meta", "mock"] = "mock"

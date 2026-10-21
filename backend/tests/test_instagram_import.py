@@ -23,10 +23,11 @@ from app.jobs.instagram import import_instagram_job
 from app.jobs.runner import JobContext
 from app.main import app
 from app.onboarding.links import hash_token
+from app.pilot import get_pilot_list
 from app.storage import get_storage
 from tests.conftest import requires_db
 from tests.fakes import EventLog, FakeChannel, FakeStorage, SequenceModel
-from tests.test_onboarding_api import new_link, upload
+from tests.test_onboarding_api import new_link, off_the_pilot_list, upload
 
 pytestmark = requires_db
 
@@ -361,6 +362,41 @@ async def test_the_start_hop_refuses_a_completed_onboarding(
     response = await client.get(f"/api/o/{token}/instagram/start", params={"ticket": ticket})
 
     assert response.status_code == 409
+
+
+async def test_the_start_hop_refuses_a_number_not_on_the_pilot_list(
+    client: httpx.AsyncClient,
+) -> None:
+    token = await new_link(client)
+    ticket = sign_ticket(token, DEV_STATE_SECRET)
+    app.dependency_overrides[get_pilot_list] = off_the_pilot_list
+
+    response = await client.get(f"/api/o/{token}/instagram/start", params={"ticket": ticket})
+
+    assert response.status_code == 403
+    assert response.json()["error"]["code"] == "not_in_pilot"
+    assert "set-cookie" not in response.headers
+
+
+async def test_a_callback_for_a_number_not_on_the_pilot_list_connects_and_imports_nothing(
+    client: httpx.AsyncClient, sessions: async_sessionmaker[AsyncSession]
+) -> None:
+    token = await new_link(client)
+    started = await start(client, token)
+    app.dependency_overrides[get_pilot_list] = off_the_pilot_list
+
+    response = await client.get(
+        urlsplit(started.headers["location"]).path,
+        params=callback_params(started, code="c"),
+        headers=binding_cookie(started),
+    )
+
+    assert response.status_code == 403
+    assert response.json()["error"]["code"] == "not_in_pilot"
+    assert_cookie_cleared(response)
+    async with sessions() as db:
+        assert await db.scalar(select(SocialAccount)) is None
+        assert (await db.scalars(select(Job.kind))).all() == []
 
 
 def job_context(

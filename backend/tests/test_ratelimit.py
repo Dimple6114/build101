@@ -8,6 +8,7 @@ from app.channels.inbound import EchoHandler, RateLimitedHandler
 from app.channels.router import get_conversation, get_inbound_handler
 from app.config import Settings
 from app.copy import messages_es
+from app.pilot import PilotGate
 from app.ratelimit import KeyedLocks, RateLimiter, TtlMap
 from tests.fakes import FakeChannel
 
@@ -87,6 +88,17 @@ def test_ttl_map_drops_expired_entries_when_it_is_written_and_never_exceeds_max_
         seen.set(key, 0.0)
     assert len(seen) == 3
     assert seen.get("c") is None  # the oldest went first
+
+
+def test_ttl_map_forgets_a_deleted_key() -> None:
+    seen = TtlMap[float](ttl_s=10, clock=Clock())
+    seen.set("a", 1.0)
+
+    seen.delete("a")
+    seen.delete("never set")
+
+    assert seen.get("a") is None
+    assert len(seen) == 0
 
 
 async def test_keyed_locks_serialize_a_key_and_forget_it_afterwards() -> None:
@@ -238,13 +250,15 @@ def test_the_real_inbound_handler_is_wrapped_in_the_sender_limit(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # Router tests override get_inbound_handler, so only this one sees the production wiring
-    # (`get_conversation` wraps the handler).
+    # (`get_conversation` wraps the handler, behind the pilot list).
     get_conversation.cache_clear()
     monkeypatch.setattr(
         "app.channels.router.get_settings", lambda: Settings(inbound_handler="echo")
     )
     try:
-        handler = get_inbound_handler()
+        gate = get_inbound_handler()
+        assert isinstance(gate, PilotGate)
+        handler = gate._inner
         assert isinstance(handler, RateLimitedHandler)
         assert isinstance(handler._inner, EchoHandler)
         assert handler._notice == messages_es.RATE_LIMITED

@@ -28,13 +28,16 @@ from app.instagram.oauth_state import (
 )
 from app.jobs.queue import enqueue
 from app.onboarding.links import onboarding_url
+from app.pilot import PilotList
 from app.ratelimit import limit_onboarding_token
 
 from .errors import ApiError, error_response
 from .onboarding import (
     OpenOnboardingDep,
+    PilotDep,
     SessionDep,
     SettingsDep,
+    check_pilot,
     get_onboarding,
     get_open_onboarding,
     is_submitted,
@@ -80,6 +83,7 @@ async def start_instagram(
     session: SessionDep,
     settings: SettingsDep,
     instagram: InstagramDep,
+    pilot: PilotDep,
 ) -> RedirectResponse:
     """Top-level hop: set the binding cookie on our own origin, then go to the consent screen."""
     secret = _state_secret(settings)
@@ -88,7 +92,7 @@ async def start_instagram(
     except InvalidState as exc:
         logger.warning("instagram start with a bad ticket: %s", exc)
         raise ApiError(400, "invalid_state", CONNECT_EXPIRED) from None
-    await get_open_onboarding(await get_onboarding(token, session), session)
+    await get_open_onboarding(await get_onboarding(token, session), session, pilot)
     nonce, cookie = new_binding(token, secret)
     response = RedirectResponse(
         instagram.authorize_url(_redirect_uri(request, settings), nonce), status_code=303
@@ -111,6 +115,7 @@ async def instagram_callback(
     session: SessionDep,
     settings: SettingsDep,
     instagram: InstagramDep,
+    pilot: PilotDep,
     code: str | None = None,
     state: str | None = None,
     error: str | None = None,
@@ -120,7 +125,7 @@ async def instagram_callback(
     try:
         token = _bound_token(binding, state, settings)
         response: Response = await _finish_connect(
-            token, code, error, request, session, settings, instagram
+            token, code, error, request, session, settings, instagram, pilot
         )
     except ApiError as exc:
         response = error_response(exc)
@@ -147,9 +152,11 @@ async def _finish_connect(
     session: AsyncSession,
     settings: Settings,
     instagram: InstagramPort,
+    pilot: PilotList,
 ) -> RedirectResponse:
     onboarding = await get_onboarding(token, session)
     business = onboarding.business
+    await check_pilot(pilot, business)
     wizard = onboarding_url(settings.frontend_url, token)
     # Locked before the check, as in get_open_onboarding: a submit in flight finishes first.
     await session.refresh(business, with_for_update=True)

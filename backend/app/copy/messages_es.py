@@ -9,7 +9,8 @@ module holds only:
 - verbatim events, sent as written without a model turn (`events.verbatim`): `brand_summary`,
   `JOB_FAILED` for a failed job and `BRAND_GENERATING`;
 - text sent directly, outside the chat: Flow 1 before the web form (`welcome`, `name_ack_link`,
-  `link_reminder`, the `OnboardingGate`, an exception recorded in ADR 0026);
+  `link_reminder`, the `OnboardingGate`, an exception recorded in ADR 0026), and `waitlist` to a
+  number not on the pilot list (the `PilotGate`, #186);
 - labels, not conversation: `carousel_slide`.
 """
 
@@ -32,6 +33,7 @@ PHOTO_UNREADABLE = "No pude abrir la foto 🙈 ¿Me la mandás de nuevo?"
 PHOTO_TOO_LARGE = "Esa foto es demasiado grande 🙈 ¿Me mandás una más chica?"
 PUBLISH_PENDING = "Instagram lo está procesando, en un ratito aparece en tu cuenta ⏳"
 PUBLISH_FAILED = "Uy, Instagram no me dejó publicarlo 🙈 ¿Lo intento de nuevo?"
+NEED_IG = "Todavía no puedo publicar en tu Instagram, falta conectarlo de nuestro lado 🙈"
 BRAND_GENERATING = "¡Gracias! Estoy estudiando tu marca, en un minuto te cuento lo que entendí ⏳"
 BRAND_FIX_PROMPT = "Contame qué cambio, con tus palabras."
 READY_OPEN_CHAT = "¡Listo, ya conozco tu marca! ¿En qué te puedo ayudar hoy?"
@@ -73,6 +75,13 @@ def welcome(assistant_name: str) -> str:
         f"¡Hola! 👋 Soy {assistant_name}, tu agencia de marketing en WhatsApp. Te ayudo a "
         "planear, crear y publicar contenido para tus redes, y *nada se publica sin que vos lo "
         "apruebes*. ¿Cómo se llama tu negocio?"
+    )
+
+
+def waitlist(assistant_name: str) -> str:
+    return (
+        f"¡Hola! 👋 Gracias por escribirnos. {assistant_name} está en un piloto cerrado con pocos "
+        "negocios. Cuando abramos más lugares lo vas a ver en nuestra web."
     )
 
 
