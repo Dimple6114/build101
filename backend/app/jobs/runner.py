@@ -112,6 +112,17 @@ class JobRunner:
         self._running: set[asyncio.Task[None]] = set()
         self._running_ids: set[uuid.UUID] = set()
         self._stopping = False
+        self._poller: asyncio.Task[None] | None = None
+        self._last_poll: datetime | None = None
+
+    def polled_within(self, window: timedelta) -> bool:
+        """Whether the poller is alive and last polled for jobs less than `window` ago (/ready)."""
+        return (
+            self._poller is not None
+            and not self._poller.done()
+            and self._last_poll is not None
+            and datetime.now(UTC) - self._last_poll < window
+        )
 
     async def start(self) -> None:
         _, abandoned = await self._take_stale(STALE_AFTER)
@@ -119,7 +130,7 @@ class JobRunner:
         # brands, which would queue a copy of a brand job abandoned here before its Reintentar is
         # out. Still started as background work, which logs a failure instead of ending startup.
         await asyncio.gather(*(self._start_after_failure(job) for job in abandoned))
-        self._background.start_service(self._poll(), "job poller")
+        self._poller = self._background.start_service(self._poll(), "job poller")
 
     def stop(self) -> None:
         """Claim no new job (the shutdown): the poller ends after its round. The jobs already
@@ -201,6 +212,7 @@ class JobRunner:
                     last_stale_check = datetime.now(UTC)
                     await self.recover_stale()
                 await self.run_due()
+                self._last_poll = datetime.now(UTC)
             except Exception:
                 logger.exception("polling for jobs failed")
             await asyncio.sleep(self._poll_interval_s)
