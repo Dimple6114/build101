@@ -1,3 +1,5 @@
+import asyncio
+import logging
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -227,6 +229,70 @@ async def test_only_free_slots_are_claimed(sessions: async_sessionmaker[AsyncSes
     await background.join()
     assert await jobs.run_due() == 1
     await background.join()
+
+
+async def test_once_stopped_the_poller_claims_no_new_job_and_ends_on_its_own(
+    sessions: async_sessionmaker[AsyncSession], caplog: pytest.LogCaptureFixture
+) -> None:
+    business, ran = await add_business(sessions), asyncio.Event()
+
+    async def ok(context: JobContext, payload: dict[str, Any]) -> None:
+        ran.set()
+
+    before = await queue(sessions, "analyze_asset", business)
+    jobs, background = runner(sessions, {"analyze_asset": ok}, FakeChannel(), poll_interval_s=0.01)
+    await jobs.start()
+    await asyncio.wait_for(ran.wait(), timeout=2)
+
+    jobs.stop()
+    after = await queue(sessions, "analyze_asset", business)
+    await asyncio.sleep(0.1)
+    with caplog.at_level(logging.WARNING, logger="app.background"):
+        await background.drain(timeout_s=1)
+
+    assert (await job_row(sessions, before)).status == "succeeded"
+    assert (await job_row(sessions, after)).status == "queued"
+    assert await jobs.run_due() == 0
+    assert "shutdown deadline passed" not in caplog.text
+
+
+async def test_a_brand_being_written_at_shutdown_still_reaches_the_owner(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    business, channel, gate = await add_business(sessions), FakeChannel(), asyncio.Event()
+    model = SequenceModel([brand_brain(whatsapp_summary="• *Cómo hablamos:* cálidos")], gate=gate)
+    job_id = await queue(sessions, "generate_brand", business)
+    jobs, background = runner(sessions, {"generate_brand": generate_brand}, channel, model)
+    assert await jobs.run_due() == 1
+
+    jobs.stop()
+    asyncio.get_running_loop().call_later(0.05, gate.set)
+    await background.drain(timeout_s=5)
+
+    assert (await job_row(sessions, job_id)).status == "succeeded"
+    assert [body for _, body, _ in channel.buttons] == [
+        messages_es.brand_summary("Katei", "• *Cómo hablamos:* cálidos")
+    ]
+
+
+async def test_a_job_still_running_at_the_deadline_is_cancelled_and_logged_with_its_ids(
+    sessions: async_sessionmaker[AsyncSession], caplog: pytest.LogCaptureFixture
+) -> None:
+    business = await add_business(sessions)
+
+    async def stuck(context: JobContext, payload: dict[str, Any]) -> None:
+        await asyncio.Event().wait()
+
+    job_id = await queue(sessions, "generate_brand", business)
+    jobs, background = runner(sessions, {"generate_brand": stuck}, FakeChannel())
+    assert await jobs.run_due() == 1
+
+    jobs.stop()
+    with caplog.at_level(logging.WARNING, logger="app.background"):
+        await asyncio.wait_for(background.drain(timeout_s=0.1), timeout=2)
+
+    assert f"job {job_id} (generate_brand) for business {business.id}" in caplog.text
+    assert (await job_row(sessions, job_id)).status == "running"
 
 
 async def test_jobs_left_running_by_a_restart_are_failed(
